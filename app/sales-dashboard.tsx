@@ -90,11 +90,6 @@ const PAGE_LABELS: Array<{ key: PageKey; label: string; note: string; number: st
 ];
 
 const ONLINE_SKU_SHEET_ID = "16hb3YZRtu0jnU0hHeL1SGHirR4lWzItGlW1LQ0zj5GU";
-const OFFLINE_SOURCES: Record<BrandKey, { spreadsheetId: string; sheets: string[] }> = {
-  SKT: { spreadsheetId: "1xEBYyD6q0rv2NNv2Ws7vJ5fKg4ZLbk6RCEoHeUsEqFE", sheets: ["屈臣氏-原始資料表", "寶雅-原始資料表", "康是美-原始資料表", "日藥-原始資料表", "711-原始資料表", "momo-原始資料表", "松本清-原始資料表"] },
-  G2G: { spreadsheetId: "1d9tjvyVicHVN5Eb1CdLBOIV-V3O8YzWK7s5YUB33CLU", sheets: ["屈臣氏-原始資料表", "寶雅-原始資料表", "康是美-原始資料表", "日藥-原始資料表", "MOMO-原始資料表", "松本清-原始資料表"] },
-  TP: { spreadsheetId: "16BHn3Lm1wP7ueh89Xb2Z6x4xYOFMX5p34wHZyz8xgdk", sheets: ["屈臣氏-原始資料表"] },
-};
 
 const BRANDS: BrandConfig[] = [
   {
@@ -167,6 +162,8 @@ const BRANDS: BrandConfig[] = [
     dmsGmv: "E",
   },
 ];
+
+const BRAND_COLORS: Record<BrandKey, string> = { SKT: "#2357af", G2G: "#bd1e67", TP: "#7656ba" };
 
 const zeroMetric = (brand: BrandKey, key: string): MetricRow => ({
   key,
@@ -421,53 +418,59 @@ function skuQuery(start: string, end: string) {
   return `select B,sum(C),D,E where ${dateWhere("A", start, end)} group by B,D,E label sum(C) ''`;
 }
 
-function offlineSkuQuery(start: string, end: string) {
-  return `select D,sum(F),E where ${dateWhere("A", start, end)} group by D,E label sum(F) ''`;
-}
-
-function readSkuRows(rows: GvizRow[], brand: BrandKey, online: boolean) {
-  const map = new Map<string, { id: string; product: string; quantity: number }>();
-  rows.forEach((row) => {
-    const id = normalizeId(stringAt(row, 0));
-    if (!id || id === "未填写") return;
-    const product = stringAt(row, online ? 2 : 2);
-    const quantity = numberAt(row, 1);
-    const current = map.get(id) || { id, product, quantity: 0 };
-    current.quantity += quantity;
-    if (!current.product) current.product = product;
-    map.set(id, current);
+function parseCsv(text: string) {
+  const lines = text.trim().split(/\r?\n/).filter(Boolean);
+  if (lines.length < 2) return [] as Array<Record<string, string>>;
+  const fields = (line: string) => [...line.matchAll(/"((?:[^"]|"")*)"/g)].map((match) => match[1].replaceAll('""', '"'));
+  const headers = fields(lines[0]);
+  return lines.slice(1).map((line) => {
+    const values = fields(line);
+    return Object.fromEntries(headers.map((header, index) => [header, values[index] || ""]));
   });
-  return map;
 }
 
 async function loadChannelData(month: string, comparison: "same" | "full"): Promise<ChannelData> {
   const period = periodFor(month, comparison);
   const previousPeriod = { start: period.previousStart, end: period.previousEnd };
-  const [onlineCurrentRows, onlinePreviousRows] = await Promise.all([
+  const [onlineCurrentRows, onlinePreviousRows, offlineResponse] = await Promise.all([
     querySheet("", skuQuery(period.start, period.end), ONLINE_SKU_SHEET_ID),
     querySheet("", skuQuery(previousPeriod.start, previousPeriod.end), ONLINE_SKU_SHEET_ID),
+    fetch("/offline_sku_sales.csv", { cache: "no-store" }),
   ]);
+  if (!offlineResponse.ok) throw new Error(`线下销量文件读取失败（${offlineResponse.status}）`);
+  const offlineRows = parseCsv(await offlineResponse.text());
   const onlineCurrent = new Map<BrandKey, Map<string, { id: string; product: string; quantity: number }>>();
   const onlinePrevious = new Map<BrandKey, Map<string, { id: string; product: string; quantity: number }>>();
   BRANDS.forEach((brand) => { onlineCurrent.set(brand.key, new Map()); onlinePrevious.set(brand.key, new Map()); });
   onlineCurrentRows.forEach((row) => { const brand = brandFromValue(stringAt(row, 3)); if (brand) onlineCurrent.get(brand)?.set(normalizeId(stringAt(row, 0)), { id: normalizeId(stringAt(row, 0)), product: stringAt(row, 2), quantity: numberAt(row, 1) }); });
   onlinePreviousRows.forEach((row) => { const brand = brandFromValue(stringAt(row, 3)); if (brand) onlinePrevious.get(brand)?.set(normalizeId(stringAt(row, 0)), { id: normalizeId(stringAt(row, 0)), product: stringAt(row, 2), quantity: numberAt(row, 1) }); });
 
+  const offlineCurrent = new Map<BrandKey, Map<string, { id: string; product: string; quantity: number }>>();
+  const offlinePrevious = new Map<BrandKey, Map<string, { id: string; product: string; quantity: number }>>();
+  BRANDS.forEach((brand) => { offlineCurrent.set(brand.key, new Map()); offlinePrevious.set(brand.key, new Map()); });
+  const currentMonth = month;
+  const previousMonth = previousPeriod.start.slice(0, 7);
+  offlineRows.forEach((row) => {
+    const brand = brandFromValue(row.brand || "");
+    const id = normalizeId(row.product_id || "");
+    if (!brand || !id || id === "未填写") return;
+    const target = row.month === currentMonth ? offlineCurrent : row.month === previousMonth ? offlinePrevious : null;
+    if (!target) return;
+    const map = target.get(brand)!;
+    const existing = map.get(id);
+    map.set(id, { id, product: id, quantity: (existing?.quantity || 0) + Number(row.quantity || 0) });
+  });
+
   const rows: ChannelSkuRow[] = [];
   for (const config of BRANDS) {
-    const source = OFFLINE_SOURCES[config.key];
-    const currentOfflineRows = await Promise.all(source.sheets.map((sheet) => querySheet(sheet, offlineSkuQuery(period.start, period.end), source.spreadsheetId)));
-    const previousOfflineRows = await Promise.all(source.sheets.map((sheet) => querySheet(sheet, offlineSkuQuery(previousPeriod.start, previousPeriod.end), source.spreadsheetId)));
-    const offlineCurrent = new Map<string, { id: string; product: string; quantity: number }>();
-    const offlinePrevious = new Map<string, { id: string; product: string; quantity: number }>();
-    currentOfflineRows.flat().forEach((row) => { const item = readSkuRows([row], config.key, false).values().next().value; if (item) { const current = offlineCurrent.get(item.id) || item; current.quantity = (offlineCurrent.get(item.id)?.quantity || 0) + item.quantity; offlineCurrent.set(item.id, current); } });
-    previousOfflineRows.flat().forEach((row) => { const item = readSkuRows([row], config.key, false).values().next().value; if (item) { const current = offlinePrevious.get(item.id) || item; current.quantity = (offlinePrevious.get(item.id)?.quantity || 0) + item.quantity; offlinePrevious.set(item.id, current); } });
-    const ids = new Set([...onlineCurrent.get(config.key)!.keys(), ...onlinePrevious.get(config.key)!.keys(), ...offlineCurrent.keys(), ...offlinePrevious.keys()]);
+    const currentOffline = offlineCurrent.get(config.key)!;
+    const previousOffline = offlinePrevious.get(config.key)!;
+    const ids = new Set([...onlineCurrent.get(config.key)!.keys(), ...onlinePrevious.get(config.key)!.keys(), ...currentOffline.keys(), ...previousOffline.keys()]);
     ids.forEach((id) => {
       const online = onlineCurrent.get(config.key)!.get(id);
       const onlinePrev = onlinePrevious.get(config.key)!.get(id);
-      const offline = offlineCurrent.get(id);
-      const offlinePrev = offlinePrevious.get(id);
+      const offline = currentOffline.get(id);
+      const offlinePrev = previousOffline.get(id);
       rows.push({ key: `${config.key}-${id}`, brand: config.key, id, product: online?.product || offline?.product || offlinePrev?.product || id, online: online?.quantity || 0, onlinePrevious: onlinePrev?.quantity || 0, offline: offline?.quantity || 0, offlinePrevious: offlinePrev?.quantity || 0 });
     });
   }
@@ -476,6 +479,30 @@ async function loadChannelData(month: string, comparison: "same" | "full"): Prom
 
 function ratio(current: number, previous: number) {
   return previous > 0 ? (current - previous) / previous : null;
+}
+
+function levelPercent(value: number | null | undefined) {
+  return value === null || value === undefined || !Number.isFinite(value) ? "—" : `${(value * 100).toFixed(1)}%`;
+}
+
+function trendClass(delta: number | null | undefined) {
+  return delta !== null && delta !== undefined && delta > 0 ? "trend-up" : delta !== null && delta !== undefined && delta < 0 ? "trend-down" : "trend-flat";
+}
+
+function DailyBrandRow({ item, comparison }: { item: BrandData; comparison: "same" | "full" }) {
+  const currentRows = item.daily.slice(-20);
+  const previousRows = item.previousDaily.slice(-20);
+  const max = Math.max(...currentRows.map((row) => row.gmv), ...previousRows.map((row) => row.gmv), 1);
+  const mom = ratio(item.current.gmv, item.previous.gmv);
+  const currentFee = item.current.gmv > 0 ? item.current.adSpend / item.current.gmv : null;
+  const previousFee = item.previous.gmv > 0 ? item.previous.adSpend / item.previous.gmv : null;
+  const feeDelta = currentFee !== null && previousFee !== null ? currentFee - previousFee : null;
+  const color = BRAND_COLORS[item.config.key];
+  const days = Array.from({ length: Math.max(currentRows.length, previousRows.length) }, (_, index) => ({ current: currentRows[index], previous: previousRows[index] }));
+  return <article className="brand-daily-row" style={{ "--brand-color": color } as React.CSSProperties}>
+    <div className="brand-row-head"><div className="brand-row-name"><i /> <b>{item.config.key}</b><span>{item.config.name}</span></div><div className="brand-row-metrics"><span>本期 GMV <strong>{formatMoney(item.current.gmv, true)}</strong></span><span className={trendClass(mom)}>环比 {percent(mom)}</span><span>站内费比 <strong>{levelPercent(currentFee)}</strong></span><span className={trendClass(feeDelta)}>费比变化 {feeDelta === null ? "—" : `${feeDelta > 0 ? "+" : "−"}${Math.abs(feeDelta * 100).toFixed(1)}pp`}</span><small>{comparison === "same" ? "上月同期" : "上个完整月"}</small></div></div>
+    <div className="brand-row-grid"><div className="daily-chart-card"><div className="chart-card-title"><b>每日 GMV</b><span>深色：本期 · 浅色：{comparison === "same" ? "上月同期" : "上月"}</span></div><div className="daily-compare-bars">{days.map((day, index) => <div className="day-group" key={`${item.config.key}-${day.current?.date || day.previous?.date || index}`}><div className="bar-slot"><b>{day.current ? formatMoney(day.current.gmv, true) : ""}</b><span className="bar-current" style={{ height: `${Math.max(3, (day.current?.gmv || 0) / max * 100)}%` }} /></div><div className="bar-slot"><b className="bar-label-muted">{day.previous ? formatMoney(day.previous.gmv, true) : ""}</b><span className="bar-previous" style={{ height: `${Math.max(3, (day.previous?.gmv || 0) / max * 100)}%` }} /></div><small>{(day.current?.date || day.previous?.date || "").slice(-2)}</small></div>)}</div><div className="chart-foot"><strong>{formatMoney(item.current.gmv, true)}</strong><span>共 {currentRows.length} 天 · 上期 {formatMoney(item.previous.gmv, true)}</span></div></div><div className="fee-chart-card"><div className="chart-card-title"><b>站内费比</b><span>站内花费 ÷ GMV</span></div><div className="fee-bars"><div className="fee-line"><span>本期</span><div className="fee-track"><i style={{ width: `${Math.min(100, Math.max(0, (currentFee || 0) * 100 * 3))}%` }} /><b>{levelPercent(currentFee)}</b></div></div><div className="fee-line"><span>上期</span><div className="fee-track previous"><i style={{ width: `${Math.min(100, Math.max(0, (previousFee || 0) * 100 * 3))}%` }} /><b>{levelPercent(previousFee)}</b></div></div></div><div className={`fee-delta ${trendClass(feeDelta)}`}>{feeDelta === null ? "暂无可比费比" : `费比${feeDelta > 0 ? "上升" : "下降"} ${Math.abs(feeDelta * 100).toFixed(1)} 个百分点`}</div></div></div>
+  </article>;
 }
 
 function MetricCard({ label, value, delta, note, color }: { label: string; value: string; delta?: number | null; note?: string; color?: string }) {
@@ -515,7 +542,7 @@ function Table({ rows, type }: { rows: MetricRow[]; type: "category" | "link" | 
     const fee = row.gmv > 0 ? row.adSpend / row.gmv : 0;
     const share = row.gmv > 0 ? row.adGmv / row.gmv : 0;
     return <tr key={row.key}>
-      <td><b>{type === "category" ? row.category : type === "ads" ? row.product : row.link}</b><small>{row.brand}{type === "link" ? ` · ${row.category}` : ""}</small></td>
+      <td><b>{type === "category" ? row.category : type === "ads" ? row.product : row.link}</b><small style={{ color: BRAND_COLORS[row.brand] }}>{row.brand}{type === "link" ? ` · ${row.category}` : ""}</small></td>
       {type === "link" && <><td>{row.id || "—"}</td><td>{row.product || "—"}</td></>}
       {type === "ads" && <td>{row.category || "—"}</td>}
       <td className="num">{formatMoney(row.gmv, true)}</td><td className={ratio(row.gmv, row.previousGmv) !== null && (ratio(row.gmv, row.previousGmv) || 0) >= 0 ? "up" : "down"}>{percent(ratio(row.gmv, row.previousGmv))}</td><td>{formatMoney(row.gmv, true)}</td><td>{formatNumber(row.orders)}</td><td>{formatMoney(aov)}</td>
@@ -527,12 +554,12 @@ function Table({ rows, type }: { rows: MetricRow[]; type: "category" | "link" | 
 
 function ChannelTable({ rows, brand }: { rows: ChannelSkuRow[]; brand: "ALL" | BrandKey }) {
   const sorted = rows.filter((row) => brand === "ALL" || row.brand === brand).sort((a, b) => (b.online + b.offline) - (a.online + a.offline)).slice(0, 120);
-  return <div className="table-wrap"><table><thead><tr><th>品牌 / 商品ID</th><th>产品名</th><th>线上销量</th><th>线上环比</th><th>线下销量</th><th>线下环比</th><th>线上－线下</th><th>线上占比</th></tr></thead><tbody>{sorted.map((row) => {
+  return <div className="table-wrap"><table><thead><tr><th>品牌 / SKU</th><th>线上销量</th><th>线上环比</th><th>线下销量</th><th>线下环比</th><th>线上－线下</th><th>线上占比</th></tr></thead><tbody>{sorted.map((row) => {
     const onlineMom = ratio(row.online, row.onlinePrevious);
     const offlineMom = ratio(row.offline, row.offlinePrevious);
     const gap = row.online - row.offline;
     const total = row.online + row.offline;
-    return <tr key={row.key}><td><b>{row.brand} · {row.id}</b><small>商品ID / ID</small></td><td>{row.product}</td><td className="num">{formatNumber(row.online)}</td><td className={onlineMom !== null && onlineMom >= 0 ? "up" : "down"}>{percent(onlineMom)}</td><td className="num">{formatNumber(row.offline)}</td><td className={offlineMom !== null && offlineMom >= 0 ? "up" : "down"}>{percent(offlineMom)}</td><td className={gap >= 0 ? "up" : "down"}>{gap >= 0 ? "+" : "−"}{formatNumber(Math.abs(gap))}</td><td>{percent(total > 0 ? row.online / total : null)}</td></tr>;
+    return <tr key={row.key}><td><b style={{ color: BRAND_COLORS[row.brand] }}>{row.brand} · {row.id}</b><small>SKU / 商品ID</small></td><td className="num">{formatNumber(row.online)}</td><td className={onlineMom !== null && onlineMom >= 0 ? "up" : "down"}>{percent(onlineMom)}</td><td className="num">{formatNumber(row.offline)}</td><td className={offlineMom !== null && offlineMom >= 0 ? "up" : "down"}>{percent(offlineMom)}</td><td className={gap >= 0 ? "up" : "down"}>{gap >= 0 ? "+" : "−"}{formatNumber(Math.abs(gap))}</td><td>{percent(total > 0 ? row.online / total : null)}</td></tr>;
   })}</tbody></table></div>;
 }
 
@@ -610,7 +637,7 @@ export function SalesDashboard() {
   const currentPage = PAGE_LABELS.find((item) => item.key === page) || PAGE_LABELS[0];
   return <main className="dashboard">
     <div className="currency-note"><span>金额单位：人民币 CNY</span><small>源表 TWD 金额按运营口径 1 TWD = 0.21 CNY 换算；目标值保持人民币</small></div>
-    <div className="dashboard-layout"><aside className="side-nav"><div className="side-brand"><span>TW / SP</span><b>品牌分析室</b></div><p className="side-label">看板入口</p><button className={brand === "ALL" && page === "overview" ? "active" : ""} onClick={() => { setBrand("ALL"); setPage("overview"); }}><strong>总览</strong><small>三品牌经营总览</small></button>{BRANDS.map((item) => <button key={item.key} className={brand === item.key && page === "overview" ? "active" : ""} onClick={() => { setBrand(item.key); setPage("overview"); }}><strong>{item.key}</strong><small>{item.name}</small></button>)}<div className="side-divider" /><button className={page === "channels" ? "active" : ""} onClick={() => { setBrand("ALL"); setPage("channels"); }}><strong>线上 / 线下 SKU</strong><small>销量环比与差距</small></button></aside><div className="dashboard-content">
+    <div className="dashboard-layout"><aside className="side-nav"><div className="side-brand"><span>TW / SP</span><b>品牌分析室</b></div><p className="side-label">看板入口</p><button className={brand === "ALL" && page === "overview" ? "active" : ""} onClick={() => { setBrand("ALL"); setPage("overview"); }}><strong>总览</strong><small>三品牌经营总览</small></button>{BRANDS.map((item) => <button key={item.key} style={{ "--brand-color": BRAND_COLORS[item.key] } as React.CSSProperties} className={brand === item.key && page === "overview" ? "active" : ""} onClick={() => { setBrand(item.key); setPage("overview"); }}><strong>{item.key}</strong><small>{item.name}</small></button>)}<div className="side-divider" /><button className={page === "channels" ? "active" : ""} onClick={() => { setBrand("ALL"); setPage("channels"); }}><strong>线上 / 线下 SKU</strong><small>销量环比与差距</small></button></aside><div className="dashboard-content">
     <header className="topbar"><div><p className="eyebrow">SALES & COST EFFICIENCY</p><h1>台湾三品牌销售分析室</h1><p className="subtitle">聚焦费用投入对 GMV 的影响 · SKT / G2G / TP · {month.replace("-", "年")}月对比分析</p></div><button className="primary-button" onClick={() => setRefresh((value) => value + 1)}>＋ 更新销售数据</button></header>
     <section className="filter-bar"><div><label>品牌</label><select value={brand} onChange={(event) => setBrand(event.target.value as "ALL" | BrandKey)}><option value="ALL">全部品牌</option>{BRANDS.map((item) => <option value={item.key} key={item.key}>{item.key} · {item.name}</option>)}</select></div><div><label>主周期</label><input type="month" value={month} onChange={(event) => setMonth(event.target.value)} /></div><div><label>对比周期</label><select value={comparison} onChange={(event) => setComparison(event.target.value as "same" | "full")}><option value="same">上月同期</option><option value="full">上个完整月</option></select></div><div><label>店铺类型</label><select value={storeType} onChange={(event) => setStoreType(event.target.value)}><option>全部店铺</option><option>本土店</option><option>跨境店</option></select></div><div><label>商品ID / ID</label><input value={productId} onChange={(event) => setProductId(event.target.value)} placeholder="输入商品ID / ID" /></div><div><label>产品名</label><input value={product} onChange={(event) => setProduct(event.target.value)} placeholder="搜索产品名" /></div><div><label>链接名</label><input value={link} onChange={(event) => setLink(event.target.value)} placeholder="搜索链接简称" /></div><div><label>品类</label><select value={category} onChange={(event) => setCategory(event.target.value)}><option value="">全部品类</option>{options.categories.map((item) => <option key={item}>{item}</option>)}</select></div><button className="reset-button" onClick={resetFilters}>重置筛选</button></section>
     <nav className="page-tabs">{PAGE_LABELS.map((item) => <button key={item.key} className={page === item.key ? "active" : ""} onClick={() => setPage(item.key)}><b>{item.number}</b><span>{item.label}</span><small>{item.note}</small></button>)}<span className="sync-state"><i className={error ? "error-dot" : ""} />{loading ? "同步中" : `截止 ${period.endDay} 日`}</span></nav>
@@ -619,9 +646,9 @@ export function SalesDashboard() {
       {page === "overview" && <>
         <section className="metric-grid"><MetricCard label="累计 GMV" value={formatMoney(total.gmv, true)} delta={ratio(total.gmv, total.previous)} note={`上月同期 ${formatMoney(total.previous, true)}`} color="#2364d8" /><MetricCard label="目标 GMV 达成" value={total.goal > 0 ? `${(total.gmv / total.goal * 100).toFixed(1)}%` : "—"} note={`目标 ${formatMoney(total.goal, true)}`} color="#ff766b" /><MetricCard label="综合费比" value={percent(total.gmv > 0 ? total.adSpend / total.gmv : null)} note="站内花费 / GMV" color="#1ba89c" /><MetricCard label="综合 ROI" value={rate(totalRoi)} note={`广告GMV ${formatMoney(total.adGmv, true)}`} color="#8d7bd8" /></section>
         <section className="metric-grid secondary"><MetricCard label="订单量" value={formatNumber(total.orders)} note={`客单价 ${formatMoney(total.orders > 0 ? total.gmv / total.orders : 0)}`} color="#2364d8" /><MetricCard label="曝光量" value={formatNumber(total.exposure)} note={`访客 ${formatNumber(total.visitors)}`} color="#ff766b" /><MetricCard label="加购量" value={formatNumber(total.cart)} note={`加购率 ${percent(total.visitors > 0 ? total.cart / total.visitors : 0)}`} color="#1ba89c" /><MetricCard label="广告GMV占比" value={percent(total.gmv > 0 ? total.adGmv / total.gmv : 0)} note={`自然GMV ${formatMoney(Math.max(0, total.gmv - total.adGmv), true)}`} color="#8d7bd8" /></section>
-        <section className="brand-panels">{visible.map((item) => { const mom = ratio(item.current.gmv, item.previous.gmv); const share = total.gmv > 0 ? item.current.gmv / total.gmv : 0; const roi = item.current.adSpend > 0 ? item.actualGmv / item.current.adSpend : 0; const brandColor = item.config.key === "G2G" ? "#bd1e67" : item.config.key === "SKT" ? "#2357af" : "#7656ba"; return <article className="brand-panel" style={{ "--brand-color": brandColor } as React.CSSProperties} key={item.config.key}><div className="panel-title"><b>{item.config.key}</b><span>{item.config.name}</span></div><div className="brand-main"><strong>{formatMoney(item.current.gmv, true)} GMV</strong><div><small>环比（{comparison === "same" ? "上月同期" : "上月"}）</small><b>{percent(mom)}</b></div></div><div className="brand-stats"><div><span>目标达成</span><b>{item.config.goal > 0 ? `${(item.current.gmv / item.config.goal * 100).toFixed(1)}%` : "—"}</b></div><div><span>品牌占比</span><b>{percent(share)}</b></div><div><span>综合ROI</span><b>{rate(roi)}</b></div></div><div className="brand-stats lower"><div><span>站内花费</span><b>{formatMoney(item.current.adSpend, true)}</b></div><div><span>广告GMV</span><b>{formatMoney(item.current.adGmv, true)}</b></div><div><span>自然GMV</span><b>{formatMoney(Math.max(0, item.current.gmv - item.current.adGmv), true)}</b></div><div><span>订单量</span><b>{formatNumber(item.current.orders)}</b></div></div><p>点击下方页面进入 {item.config.key} 的品类、SPU、链接和广告明细。</p></article>; })}</section>
+        <section className="brand-panels">{visible.map((item) => { const mom = ratio(item.current.gmv, item.previous.gmv); const share = total.gmv > 0 ? item.current.gmv / total.gmv : 0; const roi = item.current.adSpend > 0 ? item.actualGmv / item.current.adSpend : 0; const brandColor = BRAND_COLORS[item.config.key]; return <article className="brand-panel" style={{ "--brand-color": brandColor } as React.CSSProperties} key={item.config.key}><div className="panel-title"><b>{item.config.key}</b><span>{item.config.name}</span></div><div className="brand-main"><strong>{formatMoney(item.current.gmv, true)} GMV</strong><div><small>环比（{comparison === "same" ? "上月同期" : "上月"}）</small><b>{percent(mom)}</b></div></div><div className="brand-stats"><div><span>目标达成</span><b>{item.config.goal > 0 ? `${(item.current.gmv / item.config.goal * 100).toFixed(1)}%` : "—"}</b></div><div><span>品牌占比</span><b>{percent(share)}</b></div><div><span>综合ROI</span><b>{rate(roi)}</b></div></div><div className="brand-stats lower"><div><span>站内花费</span><b>{formatMoney(item.current.adSpend, true)}</b></div><div><span>广告GMV</span><b>{formatMoney(item.current.adGmv, true)}</b></div><div><span>自然GMV</span><b>{formatMoney(Math.max(0, item.current.gmv - item.current.adGmv), true)}</b></div><div><span>订单量</span><b>{formatNumber(item.current.orders)}</b></div></div><p>点击下方页面进入 {item.config.key} 的品类、链接和广告明细。</p></article>; })}</section>
         <Insight brands={visible} />
-        <section className="comparison-panel"><div className="section-title"><span>01</span><div><h2>品牌每日销售与环比</h2><p>左侧为主周期 GMV，右侧为对比周期；用于判断节奏是否提前或落后。</p></div><em>{month} · {comparison === "same" ? "上月同期" : "上个完整月"}</em></div><div className="daily-grid">{visible.map((item) => { const max = Math.max(...item.daily.map((row) => row.gmv), 1); return <div className="daily-card" key={item.config.key}><h3><i style={{ background: item.config.key === "G2G" ? "#d52e82" : item.config.key === "SKT" ? "#2865d5" : "#8d7bd8" }} />{item.config.key} 每日 GMV</h3><div className="bars">{item.daily.slice(-20).map((row) => <span key={row.date} style={{ height: `${Math.max(4, row.gmv / max * 100)}%` }} title={`${row.date} ${formatMoney(row.gmv)}`} />)}</div><div className="daily-foot"><b>{formatMoney(item.current.gmv, true)}</b><span>共 {item.daily.length} 天</span></div></div>; })}</div></section>
+        <section className="comparison-panel"><div className="section-title"><span>01</span><div><h2>品牌每日销售与环比</h2><p>每个品牌一行：左侧比较本期 / 上期 GMV，右侧展示站内费比及变化。</p></div><em>{month} · {comparison === "same" ? "上月同期" : "上个完整月"}</em></div><div className="brand-daily-rows">{visible.map((item) => <DailyBrandRow key={item.config.key} item={item} comparison={comparison} />)}</div></section>
         {brand !== "ALL" && <>
           <section className="data-page"><div className="section-title"><span>02</span><div><h2>{brand} · 品类进度</h2><p>通过匹配表的商品ID补齐产品与类目。</p></div><em>{rowsFor("category").length} 条明细</em></div><Table rows={rowsFor("category")} type="category" /></section>
           <section className="data-page"><div className="section-title"><span>04</span><div><h2>{brand} · 链接明细</h2><p>以商品ID / ID为关联主键。</p></div><em>{rowsFor("link").length} 条明细</em></div><Table rows={rowsFor("link")} type="link" /></section>
