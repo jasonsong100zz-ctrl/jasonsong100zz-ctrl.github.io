@@ -556,6 +556,21 @@ function trendClass(delta: number | null | undefined) {
   return delta !== null && delta !== undefined && delta > 0 ? "trend-up" : delta !== null && delta !== undefined && delta < 0 ? "trend-down" : "trend-flat";
 }
 
+type SortValue = string | number | null | undefined;
+type SortState = { key: string; direction: "asc" | "desc" };
+type SortColumn<T> = { key: string; label: string; value: (row: T) => SortValue; defaultDirection?: "asc" | "desc" };
+
+const collator = new Intl.Collator("zh-CN", { numeric: true, sensitivity: "base" });
+
+function compareSortValue(left: SortValue, right: SortValue) {
+  if (typeof left === "number" || typeof right === "number") return Number(left ?? Number.NEGATIVE_INFINITY) - Number(right ?? Number.NEGATIVE_INFINITY);
+  return collator.compare(String(left ?? ""), String(right ?? ""));
+}
+
+function SortableHeader({ label, active, direction, onClick }: { label: string; active: boolean; direction: "asc" | "desc"; onClick: () => void }) {
+  return <th aria-sort={active ? (direction === "asc" ? "ascending" : "descending") : "none"}><button className={`sort-button${active ? " active" : ""}`} type="button" onClick={onClick}><span>{label}</span><i>{active ? (direction === "asc" ? "↑" : "↓") : "↕"}</i></button></th>;
+}
+
 function DailyBrandRow({ item, comparison }: { item: BrandData; comparison: "same" | "full" }) {
   const currentRows = item.daily.slice(-20);
   const previousRows = item.previousDaily.slice(-20);
@@ -591,15 +606,52 @@ function Insight({ brands }: { brands: BrandData[] }) {
 }
 
 function Table({ rows, type }: { rows: MetricRow[]; type: "category" | "link" | "ads" }) {
-  const sorted = [...rows].sort((a, b) => (type === "ads" ? b.adGmv - a.adGmv : b.gmv - a.gmv)).slice(0, 80);
+  const defaultSort: SortState = { key: type === "ads" ? "adGmv" : "gmv", direction: "desc" };
+  const [sort, setSort] = useState<SortState>(defaultSort);
+  useEffect(() => setSort(defaultSort), [type]);
+  const columns: SortColumn<MetricRow>[] = type === "ads"
+    ? [
+      { key: "product", label: "产品 / 广告", value: (row) => row.product, defaultDirection: "asc" },
+      { key: "category", label: "品类", value: (row) => row.category, defaultDirection: "asc" },
+      { key: "gmv", label: "链接GMV", value: (row) => row.gmv },
+      { key: "adGmv", label: "广告成交金额", value: (row) => row.adGmv },
+      { key: "adShare", label: "广告成交占比", value: (row) => row.gmv > 0 ? row.adGmv / row.gmv : null },
+      { key: "adSpend", label: "花费", value: (row) => row.adSpend },
+      { key: "roi", label: "ROI", value: (row) => row.adSpend > 0 ? row.adGmv / row.adSpend : null },
+      { key: "exposure", label: "曝光", value: (row) => row.exposure },
+      { key: "clicks", label: "点击", value: (row) => row.clicks },
+      { key: "ctr", label: "CTR", value: (row) => row.exposure > 0 ? row.clicks / row.exposure : null },
+      { key: "cpc", label: "CPC", value: (row) => row.clicks > 0 ? row.adSpend / row.clicks : null },
+      { key: "cvr", label: "CVR", value: (row) => row.clicks > 0 ? row.conversions / row.clicks : null },
+    ]
+    : [
+      { key: "primary", label: type === "category" ? "品类" : "产品名", value: (row) => type === "category" ? row.category : row.product || row.link, defaultDirection: "asc" },
+      ...(type === "link" ? [{ key: "id", label: "商品ID / ID", value: (row: MetricRow) => row.id, defaultDirection: "asc" as const }] : []),
+      { key: "gmv", label: "GMV", value: (row) => row.gmv },
+      { key: "mom", label: "环比", value: (row) => ratio(row.gmv, row.previousGmv) },
+      { key: "monthTotal", label: "月累计", value: (row) => row.gmv },
+      { key: "orders", label: "订单", value: (row) => row.orders },
+      { key: "aov", label: "客单价", value: (row) => row.orders > 0 ? row.gmv / row.orders : null },
+      { key: "exposure", label: "曝光", value: (row) => row.exposure },
+      { key: "visitors", label: "访客", value: (row) => row.visitors },
+      { key: "clicks", label: "点击", value: (row) => row.clicks },
+      { key: "ctr", label: "CTR", value: (row) => row.exposure > 0 ? row.clicks / row.exposure : null },
+      { key: "cart", label: "加购", value: (row) => row.cart },
+      { key: "cartRate", label: "加购率", value: (row) => row.visitors > 0 ? row.cart / row.visitors : null },
+      { key: "cvr", label: "CVR", value: (row) => row.clicks > 0 ? row.orders / row.clicks : null },
+      { key: "roi", label: "ROI", value: (row) => row.adSpend > 0 ? row.adGmv / row.adSpend : null },
+      { key: "fee", label: "费比", value: (row) => row.gmv > 0 ? row.adSpend / row.gmv : null },
+      { key: "adShare", label: "广告GMV占比", value: (row) => row.gmv > 0 ? row.adGmv / row.gmv : null },
+      { key: "organicShare", label: "自然GMV占比", value: (row) => row.gmv > 0 ? 1 - row.adGmv / row.gmv : null },
+    ];
+  const sortColumn = columns.find((column) => column.key === sort.key) || columns[0];
+  const sorted = [...rows].sort((a, b) => {
+    const result = compareSortValue(sortColumn.value(a), sortColumn.value(b));
+    return sort.direction === "asc" ? result : -result;
+  }).slice(0, 80);
+  const sortBy = (column: SortColumn<MetricRow>) => setSort((current) => current.key === column.key ? { key: column.key, direction: current.direction === "asc" ? "desc" : "asc" } : { key: column.key, direction: column.defaultDirection || "desc" });
   return <div className="table-wrap"><table><thead><tr>
-    <th>{type === "category" ? "品类" : type === "ads" ? "产品 / 广告" : "产品名"}</th>
-    {type === "link" && <th>商品ID / ID</th>}
-    {type === "ads" && <th>品类</th>}
-    {type === "ads" ? <><th>链接GMV</th><th>广告成交金额</th><th>广告成交占比</th></> : <><th>GMV</th><th>环比</th><th>月累计</th><th>订单</th><th>客单价</th></>}
-    {type !== "ads" && <><th>曝光</th><th>访客</th><th>点击</th><th>CTR</th><th>加购</th><th>加购率</th><th>CVR</th></>}
-    {type === "ads" && <><th>花费</th><th>ROI</th><th>曝光</th><th>点击</th><th>CTR</th><th>CPC</th><th>CVR</th></>}
-    {type !== "ads" && <><th>ROI</th><th>费比</th><th>广告GMV占比</th><th>自然GMV占比</th></>}
+    {columns.map((column) => <SortableHeader key={column.key} label={column.label} active={sort.key === column.key} direction={sort.direction} onClick={() => sortBy(column)} />)}
   </tr></thead><tbody>{sorted.map((row) => {
     const aov = row.orders > 0 ? row.gmv / row.orders : 0;
     const ctr = row.exposure > 0 ? row.clicks / row.exposure : 0;
@@ -620,8 +672,25 @@ function Table({ rows, type }: { rows: MetricRow[]; type: "category" | "link" | 
 }
 
 function ChannelTable({ rows, brand }: { rows: ChannelSkuRow[]; brand: "ALL" | BrandKey }) {
-  const sorted = rows.filter((row) => brand === "ALL" || row.brand === brand).sort((a, b) => (b.online + b.offline) - (a.online + a.offline)).slice(0, 120);
-  return <div className="table-wrap channel-table"><table><thead><tr><th>品牌 / SKU</th><th>产品名</th><th>线上销量</th><th>线上环比</th><th>线下销量</th><th>线下环比</th><th>线上－线下</th><th>线上占比</th></tr></thead><tbody>{sorted.map((row) => {
+  const [sort, setSort] = useState<SortState>({ key: "total", direction: "desc" });
+  const columns: SortColumn<ChannelSkuRow>[] = [
+    { key: "sku", label: "品牌 / SKU", value: (row) => `${row.brand} ${row.id}`, defaultDirection: "asc" },
+    { key: "product", label: "产品名", value: (row) => row.product, defaultDirection: "asc" },
+    { key: "online", label: "线上销量", value: (row) => row.online },
+    { key: "onlineMom", label: "线上环比", value: (row) => ratio(row.online, row.onlinePrevious) },
+    { key: "offline", label: "线下销量", value: (row) => row.offline },
+    { key: "offlineMom", label: "线下环比", value: (row) => ratio(row.offline, row.offlinePrevious) },
+    { key: "gap", label: "线上－线下", value: (row) => row.online - row.offline },
+    { key: "onlineShare", label: "线上占比", value: (row) => row.online + row.offline > 0 ? row.online / (row.online + row.offline) : null },
+    { key: "total", label: "总销量", value: (row) => row.online + row.offline },
+  ];
+  const sortColumn = columns.find((column) => column.key === sort.key) || columns[8];
+  const sorted = rows.filter((row) => brand === "ALL" || row.brand === brand).sort((a, b) => {
+    const result = compareSortValue(sortColumn.value(a), sortColumn.value(b));
+    return sort.direction === "asc" ? result : -result;
+  }).slice(0, 120);
+  const sortBy = (column: SortColumn<ChannelSkuRow>) => setSort((current) => current.key === column.key ? { key: column.key, direction: current.direction === "asc" ? "desc" : "asc" } : { key: column.key, direction: column.defaultDirection || "desc" });
+  return <div className="table-wrap channel-table"><table><thead><tr>{columns.filter((column) => column.key !== "total").map((column) => <SortableHeader key={column.key} label={column.label} active={sort.key === column.key} direction={sort.direction} onClick={() => sortBy(column)} />)}</tr></thead><tbody>{sorted.map((row) => {
     const onlineMom = ratio(row.online, row.onlinePrevious);
     const offlineMom = ratio(row.offline, row.offlinePrevious);
     const gap = row.online - row.offline;
