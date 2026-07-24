@@ -19,7 +19,21 @@ function Get-DateText($row) {
 $groups = @{}
 foreach ($source in $sources) {
   foreach ($sheet in $source.Sheets) {
-    $query = [uri]::EscapeDataString("select A,D,E,F where D is not null")
+    $columnMap = @{
+      Watsons = @{ Date = "A"; Sku = "D"; Quantity = "F" }
+      POYA = @{ Date = "A"; Sku = "B"; Quantity = "E" }
+      Cosmed = @{ Date = "A"; Sku = "C"; Quantity = "F" }
+      Nihon = @{ Date = "A"; Sku = "B"; Quantity = "E" }
+      "711" = @{ Date = "A"; Sku = "B"; Quantity = "E" }
+      momo = @{ Date = "A"; Sku = "D"; Quantity = "F" }
+      Matsumoto = @{ Date = "A"; Sku = "B"; Quantity = "E" }
+    }
+    $columns = $columnMap[$sheet.Channel]
+    if (!$columns) { throw "SKU column mapping not found: $($source.Brand) / $($sheet.Channel)" }
+    $dateColumn = $columns.Date
+    $skuColumn = $columns.Sku
+    $quantityColumn = $columns.Quantity
+    $query = [uri]::EscapeDataString("select $dateColumn,$skuColumn,$quantityColumn where $skuColumn is not null")
     $url = "https://docs.google.com/spreadsheets/d/$($source.SpreadsheetId)/gviz/tq?tqx=out:json&sheet=$($sheet.Encoded)&tq=$query"
     $raw = (Invoke-WebRequest -UseBasicParsing -TimeoutSec 60 $url).Content
     $payload = $raw.Substring($raw.IndexOf('{'), $raw.LastIndexOf('}') - $raw.IndexOf('{') + 1) | ConvertFrom-Json
@@ -27,16 +41,16 @@ foreach ($source in $sources) {
     foreach ($row in $payload.table.rows) {
       $date = Get-DateText $row
       $id = (Get-Display $row 1).Trim()
-      $quantityCell = Get-Cell $row 3
+      $quantityCell = Get-Cell $row 2
       $quantity = if ($null -eq $quantityCell) { 0 } else { [double]$quantityCell.v }
       if (!$date -or !$id -or !$quantityCell) { continue }
       $key = "$($source.Brand)|$($date.Substring(0,7))|$id|$($sheet.Channel)"
-      if (!$groups.ContainsKey($key)) { $groups[$key] = [ordered]@{ brand = $source.Brand; month = $date.Substring(0,7); product_id = $id; quantity = 0; channel = $sheet.Channel } }
+      if (!$groups.ContainsKey($key)) { $groups[$key] = [ordered]@{ brand = $source.Brand; month = $date.Substring(0,7); sku = $id; quantity = 0; channel = $sheet.Channel } }
       $groups[$key].quantity += $quantity
     }
   }
 }
 
-$rows = $groups.Values | ForEach-Object { [pscustomobject]@{ brand = $_.brand; month = $_.month; product_id = $_.product_id; quantity = [math]::Round([double]$_.quantity, 2); channel = $_.channel } } | Sort-Object brand, month, product_id, channel
+$rows = $groups.Values | ForEach-Object { [pscustomobject]@{ brand = $_.brand; month = $_.month; sku = $_.sku; quantity = [math]::Round([double]$_.quantity, 2); channel = $_.channel } } | Sort-Object brand, month, sku, channel
 $rows | Export-Csv -Path $outputPath -NoTypeInformation -Encoding utf8
 Write-Output (ConvertTo-Json @{ outputPath = $outputPath; rows = @($rows).Count; brands = @($rows.brand | Select-Object -Unique) })

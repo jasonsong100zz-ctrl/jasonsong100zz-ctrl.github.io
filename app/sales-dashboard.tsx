@@ -275,6 +275,18 @@ function formatMoney(value: number, compact = false) {
   return `¥${formatNumber(value, compact)}`;
 }
 
+function formatChartAmount(value: number) {
+  return formatNumber(value, true);
+}
+
+function dateLabel(value: string) {
+  const gviz = value.match(/^Date\((\d+),(\d+),(\d+)/);
+  if (gviz) return `${Number(gviz[2]) + 1}/${Number(gviz[3])}`;
+  const iso = value.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  if (iso) return `${Number(iso[2])}/${Number(iso[3])}`;
+  return value;
+}
+
 function percent(value: number | null | undefined) {
   if (value === null || value === undefined || !Number.isFinite(value)) return "—";
   return `${value >= 0 ? "+" : ""}${(value * 100).toFixed(1)}%`;
@@ -363,6 +375,7 @@ async function loadBrand(config: BrandConfig, month: string, comparison: "same" 
   });
 
   const adTotal = [numberAt(adsAgg[0], 0), numberAt(adsAgg[0], 1), numberAt(adsAgg[0], 2), numberAt(adsAgg[0], 3), numberAt(adsAgg[0], 4)];
+  const previousAdTotal = [numberAt(adsPrev[0], 0), numberAt(adsPrev[0], 1), numberAt(adsPrev[0], 2), numberAt(adsPrev[0], 3), numberAt(adsPrev[0], 4)];
   const adMap = new Map<string, number[]>();
   adsDetail.forEach((row) => {
     const id = normalizeId(stringAt(row, 2));
@@ -390,7 +403,7 @@ async function loadBrand(config: BrandConfig, month: string, comparison: "same" 
   const daily = dailyRows.map((row) => ({ date: stringAt(row, 0), gmv: numberAt(row, 1) * exchangeRate, orders: numberAt(row, 2) }));
   const previousDaily = prevDailyRows.map((row) => ({ date: stringAt(row, 0), gmv: numberAt(row, 1) * exchangeRate, orders: numberAt(row, 2) }));
   const current = metricFromValues(config.key, `${config.key}-all`, [numberAt(currentAll[0], 0), numberAt(currentAll[0], 1), numberAt(currentAll[0], 2), numberAt(currentAll[0], 3), numberAt(currentAll[0], 4), numberAt(currentAll[0], 5), numberAt(currentAll[0], 6), numberAt(currentAll[0], 7), adTotal[0], adTotal[1], adTotal[2], adTotal[3], adTotal[4]], {}, [numberAt(prevAll[0], 0), numberAt(prevAll[0], 1)], exchangeRate);
-  const previous = metricFromValues(config.key, `${config.key}-previous`, [numberAt(prevAll[0], 0), numberAt(prevAll[0], 1), numberAt(prevAll[0], 2), numberAt(prevAll[0], 3), numberAt(prevAll[0], 4), numberAt(prevAll[0], 5), numberAt(prevAll[0], 6), numberAt(prevAll[0], 7)], {}, [], exchangeRate);
+  const previous = metricFromValues(config.key, `${config.key}-previous`, [numberAt(prevAll[0], 0), numberAt(prevAll[0], 1), numberAt(prevAll[0], 2), numberAt(prevAll[0], 3), numberAt(prevAll[0], 4), numberAt(prevAll[0], 5), numberAt(prevAll[0], 6), numberAt(prevAll[0], 7), previousAdTotal[0], previousAdTotal[1], previousAdTotal[2], previousAdTotal[3], previousAdTotal[4]], {}, [], exchangeRate);
   return {
     config,
     daily,
@@ -452,7 +465,7 @@ async function loadChannelData(month: string, comparison: "same" | "full"): Prom
   const previousMonth = previousPeriod.start.slice(0, 7);
   offlineRows.forEach((row) => {
     const brand = brandFromValue(row.brand || "");
-    const id = normalizeId(row.product_id || "");
+    const id = normalizeId(row.sku || "");
     if (!brand || !id || id === "未填写") return;
     const target = row.month === currentMonth ? offlineCurrent : row.month === previousMonth ? offlinePrevious : null;
     if (!target) return;
@@ -500,8 +513,8 @@ function DailyBrandRow({ item, comparison }: { item: BrandData; comparison: "sam
   const color = BRAND_COLORS[item.config.key];
   const days = Array.from({ length: Math.max(currentRows.length, previousRows.length) }, (_, index) => ({ current: currentRows[index], previous: previousRows[index] }));
   return <article className="brand-daily-row" style={{ "--brand-color": color } as React.CSSProperties}>
-    <div className="brand-row-head"><div className="brand-row-name"><i /> <b>{item.config.key}</b><span>{item.config.name}</span></div><div className="brand-row-metrics"><span>本期 GMV <strong>{formatMoney(item.current.gmv, true)}</strong></span><span className={trendClass(mom)}>环比 {percent(mom)}</span><span>站内费比 <strong>{levelPercent(currentFee)}</strong></span><span className={trendClass(feeDelta)}>费比变化 {feeDelta === null ? "—" : `${feeDelta > 0 ? "+" : "−"}${Math.abs(feeDelta * 100).toFixed(1)}pp`}</span><small>{comparison === "same" ? "上月同期" : "上个完整月"}</small></div></div>
-    <div className="brand-row-grid"><div className="daily-chart-card"><div className="chart-card-title"><b>每日 GMV</b><span>深色：本期 · 浅色：{comparison === "same" ? "上月同期" : "上月"}</span></div><div className="daily-compare-bars">{days.map((day, index) => <div className="day-group" key={`${item.config.key}-${day.current?.date || day.previous?.date || index}`}><div className="bar-slot"><b>{day.current ? formatMoney(day.current.gmv, true) : ""}</b><span className="bar-current" style={{ height: `${Math.max(3, (day.current?.gmv || 0) / max * 100)}%` }} /></div><div className="bar-slot"><b className="bar-label-muted">{day.previous ? formatMoney(day.previous.gmv, true) : ""}</b><span className="bar-previous" style={{ height: `${Math.max(3, (day.previous?.gmv || 0) / max * 100)}%` }} /></div><small>{(day.current?.date || day.previous?.date || "").slice(-2)}</small></div>)}</div><div className="chart-foot"><strong>{formatMoney(item.current.gmv, true)}</strong><span>共 {currentRows.length} 天 · 上期 {formatMoney(item.previous.gmv, true)}</span></div></div><div className="fee-chart-card"><div className="chart-card-title"><b>站内费比</b><span>站内花费 ÷ GMV</span></div><div className="fee-bars"><div className="fee-line"><span>本期</span><div className="fee-track"><i style={{ width: `${Math.min(100, Math.max(0, (currentFee || 0) * 100 * 3))}%` }} /><b>{levelPercent(currentFee)}</b></div></div><div className="fee-line"><span>上期</span><div className="fee-track previous"><i style={{ width: `${Math.min(100, Math.max(0, (previousFee || 0) * 100 * 3))}%` }} /><b>{levelPercent(previousFee)}</b></div></div></div><div className={`fee-delta ${trendClass(feeDelta)}`}>{feeDelta === null ? "暂无可比费比" : `费比${feeDelta > 0 ? "上升" : "下降"} ${Math.abs(feeDelta * 100).toFixed(1)} 个百分点`}</div></div></div>
+    <div className="brand-row-head"><div className="brand-row-name"><i /> <b>{item.config.key}</b><span>{item.config.name}</span></div><div className="brand-row-metrics"><span>本期 GMV <strong>{formatChartAmount(item.current.gmv)}</strong></span><span className={trendClass(mom)}>环比 {percent(mom)}</span><span>站内费比 <strong>{levelPercent(currentFee)}</strong></span><span className={trendClass(feeDelta)}>费比变化 {feeDelta === null ? "—" : `${feeDelta > 0 ? "+" : "−"}${Math.abs(feeDelta * 100).toFixed(1)}pp`}</span><small>{comparison === "same" ? "上月同期" : "上个完整月"}</small></div></div>
+    <div className="brand-row-grid"><div className="daily-chart-card"><div className="chart-card-title"><b>每日 GMV</b><span>深色：本期 · 浅色：{comparison === "same" ? "上月同期" : "上月"}</span></div><div className="daily-compare-bars">{days.map((day, index) => <div className="day-group" key={`${item.config.key}-${day.current?.date || day.previous?.date || index}`}><div className="bar-slot"><b>{day.current ? formatChartAmount(day.current.gmv) : ""}</b><span className="bar-current" style={{ height: `${Math.max(3, (day.current?.gmv || 0) / max * 100)}%` }} /></div><div className="bar-slot"><b className="bar-label-muted">{day.previous ? formatChartAmount(day.previous.gmv) : ""}</b><span className="bar-previous" style={{ height: `${Math.max(3, (day.previous?.gmv || 0) / max * 100)}%` }} /></div><small>{dateLabel(day.current?.date || day.previous?.date || "")}</small></div>)}</div><div className="chart-foot"><strong>{formatChartAmount(item.current.gmv)}</strong><span>共 {currentRows.length} 天 · 上期 {formatChartAmount(item.previous.gmv)}</span></div></div><div className="fee-chart-card"><div className="chart-card-title"><b>站内费比</b><span>站内花费 ÷ GMV</span></div><div className="fee-bars"><div className="fee-line"><span>本期</span><div className="fee-track"><i style={{ width: `${Math.min(100, Math.max(0, (currentFee || 0) * 100 * 3))}%` }} /><b>{levelPercent(currentFee)}</b></div></div><div className="fee-line"><span>上期</span><div className="fee-track previous"><i style={{ width: `${Math.min(100, Math.max(0, (previousFee || 0) * 100 * 3))}%` }} /><b>{levelPercent(previousFee)}</b></div></div></div><div className={`fee-delta ${trendClass(feeDelta)}`}>{feeDelta === null ? "暂无可比费比" : `费比${feeDelta > 0 ? "上升" : "下降"} ${Math.abs(feeDelta * 100).toFixed(1)} 个百分点`}</div></div></div>
   </article>;
 }
 
