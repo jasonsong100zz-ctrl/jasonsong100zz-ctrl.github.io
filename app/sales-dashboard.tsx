@@ -80,6 +80,7 @@ type ChannelSkuRow = {
 };
 
 type ChannelData = { rows: ChannelSkuRow[] };
+const FALLBACK_CATEGORY = "其他/赠品";
 
 const PAGE_LABELS: Array<{ key: PageKey; label: string; note: string; number: string }> = [
   { key: "overview", label: "品牌总览", note: "经营结果与效率", number: "01" },
@@ -215,7 +216,7 @@ function addMetric(target: MetricRow, source: MetricRow) {
 function aggregateByCategory(rows: MetricRow[], brand: BrandKey) {
   const groups = new Map<string, MetricRow>();
   rows.forEach((row) => {
-    const category = row.category || "未匹配类目";
+    const category = row.category || FALLBACK_CATEGORY;
     const existing = groups.get(category) || { ...zeroMetric(brand, `category-${category}`), category, product: category };
     addMetric(existing, row);
     groups.set(category, existing);
@@ -237,6 +238,14 @@ async function querySheet(sheet: string, query: string, spreadsheetId = SHEET_ID
   const payload = JSON.parse(text.slice(start, end + 1));
   if (payload.status !== "ok") throw new Error("Google Sheet 查询失败");
   return payload.table.rows as GvizRow[];
+}
+
+async function querySheetOptional(sheet: string, query: string, spreadsheetId = SHEET_ID) {
+  try {
+    return await querySheet(sheet, query, spreadsheetId);
+  } catch {
+    return [] as GvizRow[];
+  }
 }
 
 function isoDate(year: number, month: number, day: number) {
@@ -273,6 +282,10 @@ function formatNumber(value: number, compact = false) {
 
 function formatMoney(value: number, compact = false) {
   return `¥${formatNumber(value, compact)}`;
+}
+
+function formatMoneyOneDecimal(value: number) {
+  return `¥${new Intl.NumberFormat("zh-CN", { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(value || 0)}`;
 }
 
 function formatChartAmount(value: number) {
@@ -344,6 +357,7 @@ async function loadBrand(config: BrandConfig, month: string, comparison: "same" 
     : config.key === "G2G"
       ? "select R,S,T where R is not null"
       : "select X,Y,Z where X is not null";
+  const maintainedMappingQuery = "select A,B,C,D where B is not null";
   const aggregateQuery = (start: string, end: string, group = "") =>
     metricQuery(config.linkSheet, "B", start, end, group);
   const shopQuery = (start: string, end: string) =>
@@ -353,7 +367,7 @@ async function loadBrand(config: BrandConfig, month: string, comparison: "same" 
   const adsDetailQuery = `select ${config.adsProduct},${config.adsCategory},${config.adsId},sum(${config.adsGmv}),sum(${config.adsSpend}),sum(${config.adsExposure}),sum(${config.adsClicks}),sum(${config.adsConversions}) where ${dateWhere(config.adsDate, period.start, period.end)} group by ${config.adsProduct},${config.adsCategory},${config.adsId} label sum(${config.adsGmv}) '',sum(${config.adsSpend}) '',sum(${config.adsExposure}) '',sum(${config.adsClicks}) '',sum(${config.adsConversions}) ''`;
   const dmsQuery = `select sum(${config.dmsGmv}) where ${dateWhere(config.dmsDate, period.start, period.end)} label sum(${config.dmsGmv}) ''`;
 
-  const [dailyRows, prevDailyRows, currentAll, prevAll, currentLinks, prevLinks, adsAgg, adsPrev, adsDetail, dms, mappingRows] = await Promise.all([
+  const [dailyRows, prevDailyRows, currentAll, prevAll, currentLinks, prevLinks, adsAgg, adsPrev, adsDetail, dms, mappingRows, maintainedMappingRows] = await Promise.all([
     querySheet(config.shopSheet, shopQuery(period.start, period.end)),
     querySheet(config.shopSheet, shopQuery(previousPeriod.start, previousPeriod.end)),
     querySheet(config.linkSheet, aggregateQuery(period.start, period.end)),
@@ -365,13 +379,21 @@ async function loadBrand(config: BrandConfig, month: string, comparison: "same" 
     querySheet(config.adsSheet, adsDetailQuery),
     querySheet(config.dmsSheet, dmsQuery),
     querySheet("匹配表", mappingQuery),
+    querySheetOptional("看板归类维护", maintainedMappingQuery),
   ]);
 
   const matchMap = new Map<string, MatchRecord>();
   mappingRows.forEach((row) => {
     const id = stringAt(row, 0);
     if (!id) return;
-    matchMap.set(normalizeId(id), { id: normalizeId(id), link: stringAt(row, 1), product: stringAt(row, 1), category: stringAt(row, 2) });
+    matchMap.set(normalizeId(id), { id: normalizeId(id), link: stringAt(row, 1), product: stringAt(row, 1), category: stringAt(row, 2) || FALLBACK_CATEGORY });
+  });
+  maintainedMappingRows.forEach((row) => {
+    if (brandFromValue(stringAt(row, 0)) !== config.key) return;
+    const id = normalizeId(stringAt(row, 1));
+    const product = stringAt(row, 2);
+    if (!id || !product) return;
+    matchMap.set(id, { id, link: product, product, category: stringAt(row, 3) || FALLBACK_CATEGORY });
   });
 
   const adTotal = [numberAt(adsAgg[0], 0), numberAt(adsAgg[0], 1), numberAt(adsAgg[0], 2), numberAt(adsAgg[0], 3), numberAt(adsAgg[0], 4)];
@@ -391,7 +413,7 @@ async function loadBrand(config: BrandConfig, month: string, comparison: "same" 
       const rawId = stringAt(row, 1) || stringAt(row, 0);
       const id = normalizeId(rawId);
       const match = matchMap.get(id);
-      const dimensions = { link: match?.link || stringAt(row, 0), id, product: match?.product || stringAt(row, 2), category: match?.category || "未匹配类目" };
+      const dimensions = { link: match?.link || stringAt(row, 0), id, product: match?.product || stringAt(row, 2), category: match?.category || FALLBACK_CATEGORY };
       const offset = 3;
       const values = Array.from({ length: 8 }, (_, i) => numberAt(row, offset + i));
       const ad = adMap.get(id) || [];
@@ -412,9 +434,13 @@ async function loadBrand(config: BrandConfig, month: string, comparison: "same" 
     previous,
     category: aggregateByCategory(links, config.key),
     links,
-    ads: adsDetail.map((row, index) => ({
-      ...metricFromValues(config.key, `ad-${index}`, [numberAt(row, 3), 0, numberAt(row, 5), numberAt(row, 6), 0, 0, 0, 0, numberAt(row, 3), numberAt(row, 4), numberAt(row, 5), numberAt(row, 6), numberAt(row, 7)], { product: stringAt(row, 0), category: stringAt(row, 1), id: normalizeId(stringAt(row, 2)) }, [], exchangeRate),
-    })),
+    ads: adsDetail.map((row, index) => {
+      const id = normalizeId(stringAt(row, 2));
+      const link = links.find((item) => item.id === id);
+      return {
+        ...metricFromValues(config.key, `ad-${index}`, [link?.gmv || 0, 0, numberAt(row, 5), numberAt(row, 6), 0, 0, 0, 0, numberAt(row, 3), numberAt(row, 4), numberAt(row, 5), numberAt(row, 6), numberAt(row, 7)], { product: stringAt(row, 0), category: stringAt(row, 1) || link?.category || FALLBACK_CATEGORY, id }, [], exchangeRate),
+      };
+    }),
     actualGmv: numberAt(dms[0], 0) * exchangeRate,
   } satisfies BrandData;
 }
@@ -431,6 +457,10 @@ function skuQuery(start: string, end: string) {
   return `select B,sum(C),D,E where ${dateWhere("A", start, end)} group by B,D,E label sum(C) ''`;
 }
 
+function skuProductQuery() {
+  return "select B,D,E where B is not null";
+}
+
 function parseCsv(text: string) {
   const lines = text.trim().split(/\r?\n/).filter(Boolean);
   if (lines.length < 2) return [] as Array<Record<string, string>>;
@@ -445,18 +475,41 @@ function parseCsv(text: string) {
 async function loadChannelData(month: string, comparison: "same" | "full"): Promise<ChannelData> {
   const period = periodFor(month, comparison);
   const previousPeriod = { start: period.previousStart, end: period.previousEnd };
-  const [onlineCurrentRows, onlinePreviousRows, offlineResponse] = await Promise.all([
+  const [onlineCurrentRows, onlinePreviousRows, onlineProductRows, offlineResponse] = await Promise.all([
     querySheet("", skuQuery(period.start, period.end), ONLINE_SKU_SHEET_ID),
     querySheet("", skuQuery(previousPeriod.start, previousPeriod.end), ONLINE_SKU_SHEET_ID),
+    querySheet("", skuProductQuery(), ONLINE_SKU_SHEET_ID),
     fetch("/offline_sku_sales.csv", { cache: "no-store" }),
   ]);
   if (!offlineResponse.ok) throw new Error(`线下销量文件读取失败（${offlineResponse.status}）`);
   const offlineRows = parseCsv(await offlineResponse.text());
   const onlineCurrent = new Map<BrandKey, Map<string, { id: string; product: string; quantity: number }>>();
   const onlinePrevious = new Map<BrandKey, Map<string, { id: string; product: string; quantity: number }>>();
+  const productMap = new Map<BrandKey, Map<string, string>>();
+  BRANDS.forEach((brand) => productMap.set(brand.key, new Map()));
   BRANDS.forEach((brand) => { onlineCurrent.set(brand.key, new Map()); onlinePrevious.set(brand.key, new Map()); });
-  onlineCurrentRows.forEach((row) => { const brand = brandFromValue(stringAt(row, 3)); if (brand) onlineCurrent.get(brand)?.set(normalizeId(stringAt(row, 0)), { id: normalizeId(stringAt(row, 0)), product: stringAt(row, 2), quantity: numberAt(row, 1) }); });
-  onlinePreviousRows.forEach((row) => { const brand = brandFromValue(stringAt(row, 3)); if (brand) onlinePrevious.get(brand)?.set(normalizeId(stringAt(row, 0)), { id: normalizeId(stringAt(row, 0)), product: stringAt(row, 2), quantity: numberAt(row, 1) }); });
+  onlineProductRows.forEach((row) => {
+    const brand = brandFromValue(stringAt(row, 2));
+    const id = normalizeId(stringAt(row, 0));
+    const product = stringAt(row, 1);
+    if (brand && id && product) productMap.get(brand)?.set(id, product);
+  });
+  onlineCurrentRows.forEach((row) => {
+    const brand = brandFromValue(stringAt(row, 3));
+    if (!brand) return;
+    const id = normalizeId(stringAt(row, 0));
+    const product = stringAt(row, 2);
+    if (product) productMap.get(brand)?.set(id, product);
+    onlineCurrent.get(brand)?.set(id, { id, product, quantity: numberAt(row, 1) });
+  });
+  onlinePreviousRows.forEach((row) => {
+    const brand = brandFromValue(stringAt(row, 3));
+    if (!brand) return;
+    const id = normalizeId(stringAt(row, 0));
+    const product = stringAt(row, 2);
+    if (product) productMap.get(brand)?.set(id, product);
+    onlinePrevious.get(brand)?.set(id, { id, product, quantity: numberAt(row, 1) });
+  });
 
   const offlineCurrent = new Map<BrandKey, Map<string, { id: string; product: string; quantity: number }>>();
   const offlinePrevious = new Map<BrandKey, Map<string, { id: string; product: string; quantity: number }>>();
@@ -471,7 +524,8 @@ async function loadChannelData(month: string, comparison: "same" | "full"): Prom
     if (!target) return;
     const map = target.get(brand)!;
     const existing = map.get(id);
-    map.set(id, { id, product: id, quantity: (existing?.quantity || 0) + Number(row.quantity || 0) });
+    const product = row.product || productMap.get(brand)?.get(id) || id;
+    map.set(id, { id, product, quantity: (existing?.quantity || 0) + Number(row.quantity || 0) });
   });
 
   const rows: ChannelSkuRow[] = [];
@@ -484,7 +538,7 @@ async function loadChannelData(month: string, comparison: "same" | "full"): Prom
       const onlinePrev = onlinePrevious.get(config.key)!.get(id);
       const offline = currentOffline.get(id);
       const offlinePrev = previousOffline.get(id);
-      rows.push({ key: `${config.key}-${id}`, brand: config.key, id, product: online?.product || offline?.product || offlinePrev?.product || id, online: online?.quantity || 0, onlinePrevious: onlinePrev?.quantity || 0, offline: offline?.quantity || 0, offlinePrevious: offlinePrev?.quantity || 0 });
+      rows.push({ key: `${config.key}-${id}`, brand: config.key, id, product: online?.product || onlinePrev?.product || offline?.product || offlinePrev?.product || productMap.get(config.key)?.get(id) || id, online: online?.quantity || 0, onlinePrevious: onlinePrev?.quantity || 0, offline: offline?.quantity || 0, offlinePrevious: offlinePrev?.quantity || 0 });
     });
   }
   return { rows };
@@ -537,12 +591,12 @@ function Insight({ brands }: { brands: BrandData[] }) {
 }
 
 function Table({ rows, type }: { rows: MetricRow[]; type: "category" | "link" | "ads" }) {
-  const sorted = [...rows].sort((a, b) => b.gmv - a.gmv).slice(0, 80);
+  const sorted = [...rows].sort((a, b) => (type === "ads" ? b.adGmv - a.adGmv : b.gmv - a.gmv)).slice(0, 80);
   return <div className="table-wrap"><table><thead><tr>
-    <th>{type === "category" ? "品类" : type === "ads" ? "产品 / 广告" : "链接 / 产品"}</th>
-    {type === "link" && <><th>商品ID / ID</th><th>产品名</th></>}
+    <th>{type === "category" ? "品类" : type === "ads" ? "产品 / 广告" : "产品名"}</th>
+    {type === "link" && <th>商品ID / ID</th>}
     {type === "ads" && <th>品类</th>}
-    <th>GMV</th><th>环比</th><th>月累计</th><th>订单</th><th>客单价</th>
+    {type === "ads" ? <><th>链接GMV</th><th>广告成交金额</th><th>广告成交占比</th></> : <><th>GMV</th><th>环比</th><th>月累计</th><th>订单</th><th>客单价</th></>}
     {type !== "ads" && <><th>曝光</th><th>访客</th><th>点击</th><th>CTR</th><th>加购</th><th>加购率</th><th>CVR</th></>}
     {type === "ads" && <><th>花费</th><th>ROI</th><th>曝光</th><th>点击</th><th>CTR</th><th>CPC</th><th>CVR</th></>}
     {type !== "ads" && <><th>ROI</th><th>费比</th><th>广告GMV占比</th><th>自然GMV占比</th></>}
@@ -555,24 +609,24 @@ function Table({ rows, type }: { rows: MetricRow[]; type: "category" | "link" | 
     const fee = row.gmv > 0 ? row.adSpend / row.gmv : 0;
     const share = row.gmv > 0 ? row.adGmv / row.gmv : 0;
     return <tr key={row.key}>
-      <td><b>{type === "category" ? row.category : type === "ads" ? row.product : row.link}</b><small style={{ color: BRAND_COLORS[row.brand] }}>{row.brand}{type === "link" ? ` · ${row.category}` : ""}</small></td>
-      {type === "link" && <><td>{row.id || "—"}</td><td>{row.product || "—"}</td></>}
+      <td><b>{type === "category" ? row.category : row.product || row.link || "—"}</b><small style={{ color: BRAND_COLORS[row.brand] }}>{row.brand}{type === "link" ? ` · ${row.category || FALLBACK_CATEGORY}` : ""}</small></td>
+      {type === "link" && <td>{row.id || "—"}</td>}
       {type === "ads" && <td>{row.category || "—"}</td>}
-      <td className="num">{formatMoney(row.gmv, true)}</td><td className={ratio(row.gmv, row.previousGmv) !== null && (ratio(row.gmv, row.previousGmv) || 0) >= 0 ? "up" : "down"}>{percent(ratio(row.gmv, row.previousGmv))}</td><td>{formatMoney(row.gmv, true)}</td><td>{formatNumber(row.orders)}</td><td>{formatMoney(aov)}</td>
+      {type === "ads" ? <><td className="num">{row.gmv > 0 ? formatMoney(row.gmv, true) : "—"}</td><td className="num">{formatMoney(row.adGmv, true)}</td><td>{percent(row.gmv > 0 ? row.adGmv / row.gmv : null)}</td></> : <><td className="num">{formatMoney(row.gmv, true)}</td><td className={ratio(row.gmv, row.previousGmv) !== null && (ratio(row.gmv, row.previousGmv) || 0) >= 0 ? "up" : "down"}>{percent(ratio(row.gmv, row.previousGmv))}</td><td>{formatMoney(row.gmv, true)}</td><td>{formatNumber(row.orders)}</td><td>{formatMoney(aov)}</td></>}
       {type !== "ads" && <><td>{formatNumber(row.exposure)}</td><td>{formatNumber(row.visitors)}</td><td>{formatNumber(row.clicks)}</td><td>{percent(ctr)}</td><td>{formatNumber(row.cart)}</td><td>{percent(cartRate)}</td><td>{percent(cvr)}</td><td>{rate(roi)}</td><td>{percent(fee)}</td><td>{percent(share)}</td><td>{percent(1 - share)}</td></>}
-      {type === "ads" && <><td>{formatMoney(row.adSpend, true)}</td><td>{rate(roi)}</td><td>{formatNumber(row.exposure)}</td><td>{formatNumber(row.clicks)}</td><td>{percent(ctr)}</td><td>{formatMoney(row.adSpend / Math.max(1, row.clicks))}</td><td>{percent(row.conversions > 0 ? row.conversions / Math.max(1, row.clicks) : 0)}</td></>}
+      {type === "ads" && <><td>{formatMoney(row.adSpend, true)}</td><td>{rate(roi)}</td><td>{formatNumber(row.exposure)}</td><td>{formatNumber(row.clicks)}</td><td>{percent(ctr)}</td><td>{formatMoneyOneDecimal(row.adSpend / Math.max(1, row.clicks))}</td><td>{percent(row.conversions > 0 ? row.conversions / Math.max(1, row.clicks) : 0)}</td></>}
     </tr>;
   })}</tbody></table></div>;
 }
 
 function ChannelTable({ rows, brand }: { rows: ChannelSkuRow[]; brand: "ALL" | BrandKey }) {
   const sorted = rows.filter((row) => brand === "ALL" || row.brand === brand).sort((a, b) => (b.online + b.offline) - (a.online + a.offline)).slice(0, 120);
-  return <div className="table-wrap"><table><thead><tr><th>品牌 / SKU</th><th>线上销量</th><th>线上环比</th><th>线下销量</th><th>线下环比</th><th>线上－线下</th><th>线上占比</th></tr></thead><tbody>{sorted.map((row) => {
+  return <div className="table-wrap channel-table"><table><thead><tr><th>品牌 / SKU</th><th>产品名</th><th>线上销量</th><th>线上环比</th><th>线下销量</th><th>线下环比</th><th>线上－线下</th><th>线上占比</th></tr></thead><tbody>{sorted.map((row) => {
     const onlineMom = ratio(row.online, row.onlinePrevious);
     const offlineMom = ratio(row.offline, row.offlinePrevious);
     const gap = row.online - row.offline;
     const total = row.online + row.offline;
-    return <tr key={row.key}><td><b style={{ color: BRAND_COLORS[row.brand] }}>{row.brand} · {row.id}</b><small>SKU / 商品ID</small></td><td className="num">{formatNumber(row.online)}</td><td className={onlineMom !== null && onlineMom >= 0 ? "up" : "down"}>{percent(onlineMom)}</td><td className="num">{formatNumber(row.offline)}</td><td className={offlineMom !== null && offlineMom >= 0 ? "up" : "down"}>{percent(offlineMom)}</td><td className={gap >= 0 ? "up" : "down"}>{gap >= 0 ? "+" : "−"}{formatNumber(Math.abs(gap))}</td><td>{percent(total > 0 ? row.online / total : null)}</td></tr>;
+    return <tr key={row.key}><td><b style={{ color: BRAND_COLORS[row.brand] }}>{row.brand} · {row.id}</b><small>按 SKU 码匹配</small></td><td><b>{row.product || row.id}</b><small>产品名</small></td><td className="num">{formatNumber(row.online)}</td><td className={onlineMom !== null && onlineMom >= 0 ? "up" : "down"}>{percent(onlineMom)}</td><td className="num">{formatNumber(row.offline)}</td><td className={offlineMom !== null && offlineMom >= 0 ? "up" : "down"}>{percent(offlineMom)}</td><td className={gap >= 0 ? "up" : "down"}>{gap >= 0 ? "+" : "−"}{formatNumber(Math.abs(gap))}</td><td>{percent(total > 0 ? row.online / total : null)}</td></tr>;
   })}</tbody></table></div>;
 }
 
