@@ -62,7 +62,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .subtitle { margin: 9px 0 0; color: var(--muted); font-size: 13px; }
 .primary-button { height: 43px; white-space: nowrap; }
 
-.filter-bar { position: sticky; top: 10px; z-index: 20; display: grid; grid-template-columns: 1.05fr .9fr .9fr .9fr 1.15fr 1.35fr 1.35fr 1fr 1fr auto; align-items: end; gap: 9px; padding: 13px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,.96); box-shadow: 0 10px 24px rgba(23,47,85,.10); backdrop-filter: blur(10px); }
+.filter-bar { position: sticky; top: 10px; z-index: 20; display: grid; grid-template-columns: .9fr .95fr .95fr .95fr .95fr 1.1fr 1.35fr 1fr auto; align-items: end; gap: 9px; padding: 13px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,.96); box-shadow: 0 10px 24px rgba(23,47,85,.10); backdrop-filter: blur(10px); }
 .filter-bar label { display: block; margin: 0 0 5px; color: var(--muted); font-size: 10px; }
 .filter-bar input, .filter-bar select { width: 100%; height: 36px; padding: 0 9px; border: 1px solid #d6e0ec; border-radius: 6px; background: #fbfdff; color: var(--ink); font-size: 12px; }
 .reset-button { height: 36px; border: 1px solid #c9d7e8; border-radius: 6px; background: #fff; color: var(--blue); font-size: 12px; white-space: nowrap; }
@@ -178,6 +178,8 @@ td small { margin-top: 4px; color: #8b9bb0; font-size: 9px; }
 td.num { color: var(--ink); font-weight: 800; }
 td.up { color: var(--up); font-weight: 700; }
 td.down { color: var(--down); font-weight: 700; }
+td.metric-value b { color: var(--ink); font-size: 11px; font-weight: 800; }
+td.metric-value small { font-size: 9px; }
 tbody tr:hover td { background: #f8fbff; }
 .loading-state { min-height: 450px; display: flex; justify-content: center; align-items: center; gap: 15px; color: var(--muted); }
 .loading-state strong { color: var(--ink); }

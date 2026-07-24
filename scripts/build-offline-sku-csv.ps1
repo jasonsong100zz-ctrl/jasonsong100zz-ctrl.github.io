@@ -46,14 +46,14 @@ foreach ($source in $sources) {
       $quantityCell = Get-Cell $row 3
       $quantity = if ($null -eq $quantityCell) { 0 } else { [double]$quantityCell.v }
       if (!$date -or !$id -or !$quantityCell) { continue }
-      $key = "$($source.Brand)|$($date.Substring(0,7))|$id|$($sheet.Channel)"
-      if (!$groups.ContainsKey($key)) { $groups[$key] = [ordered]@{ brand = $source.Brand; month = $date.Substring(0,7); sku = $id; product = $product; quantity = 0; channel = $sheet.Channel } }
+      $key = "$($source.Brand)|$date|$id|$($sheet.Channel)"
+      if (!$groups.ContainsKey($key)) { $groups[$key] = [ordered]@{ brand = $source.Brand; date = $date; month = $date.Substring(0,7); sku = $id; product = $product; quantity = 0; channel = $sheet.Channel } }
       if (!$groups[$key].product -and $product) { $groups[$key].product = $product }
       $groups[$key].quantity += $quantity
     }
   }
 }
 
-$rows = $groups.Values | ForEach-Object { [pscustomobject]@{ brand = $_.brand; month = $_.month; sku = $_.sku; product = $_.product; quantity = [math]::Round([double]$_.quantity, 2); channel = $_.channel } } | Sort-Object brand, month, sku, channel
+$rows = $groups.Values | ForEach-Object { [pscustomobject]@{ brand = $_.brand; date = $_.date; month = $_.month; sku = $_.sku; product = $_.product; quantity = [math]::Round([double]$_.quantity, 2); channel = $_.channel } } | Sort-Object brand, date, sku, channel
 $rows | Export-Csv -Path $outputPath -NoTypeInformation -Encoding utf8
 Write-Output (ConvertTo-Json @{ outputPath = $outputPath; rows = @($rows).Count; brands = @($rows.brand | Select-Object -Unique) })
