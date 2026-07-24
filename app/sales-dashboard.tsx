@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
 const SHEET_ID = "1yuJxg2PFQgAiOjnnCZVutQm-4I1q376c8eXZOjWQLN8";
+const DEFAULT_TWD_TO_CNY = 0.21;
 const PASSWORD_HASH =
   "7f469b0b89e7f7dfe41555e78f8ae3ba21144802765fc65af724d4467e648fd2";
 
@@ -234,7 +235,7 @@ function formatNumber(value: number, compact = false) {
 }
 
 function formatMoney(value: number, compact = false) {
-  return `NT$ ${formatNumber(value, compact)}`;
+  return `¥${formatNumber(value, compact)}`;
 }
 
 function percent(value: number | null | undefined) {
@@ -252,11 +253,12 @@ function metricFromValues(
   values: number[],
   dimensions: Partial<MetricRow> = {},
   previous: number[] = [],
+  exchangeRate = DEFAULT_TWD_TO_CNY,
 ): MetricRow {
   return {
     ...zeroMetric(brand, key),
     ...dimensions,
-    gmv: values[0] || 0,
+    gmv: (values[0] || 0) * exchangeRate,
     orders: values[1] || 0,
     exposure: values[2] || 0,
     clicks: values[3] || 0,
@@ -264,12 +266,12 @@ function metricFromValues(
     search: values[5] || 0,
     cart: values[6] || 0,
     units: values[7] || 0,
-    adGmv: values[8] || 0,
-    adSpend: values[9] || 0,
+    adGmv: (values[8] || 0) * exchangeRate,
+    adSpend: (values[9] || 0) * exchangeRate,
     adExposure: values[10] || 0,
     adClicks: values[11] || 0,
     conversions: values[12] || 0,
-    previousGmv: previous[0] || 0,
+    previousGmv: (previous[0] || 0) * exchangeRate,
     previousOrders: previous[1] || 0,
   };
 }
@@ -284,7 +286,7 @@ function metricQuery(
   return `select ${groupBy ? `${groupBy},` : ""}sum(K),sum(R),sum(M),sum(N),sum(AD),sum(AH),sum(AK),sum(T) where ${dateWhere(dateColumn, start, end)}${groupBy ? ` group by ${groupBy}` : ""} label sum(K) '',sum(R) '',sum(M) '',sum(N) '',sum(AD) '',sum(AH) '',sum(AK) '',sum(T) ''`;
 }
 
-async function loadBrand(config: BrandConfig, month: string, comparison: "same" | "full") {
+async function loadBrand(config: BrandConfig, month: string, comparison: "same" | "full", exchangeRate = DEFAULT_TWD_TO_CNY) {
   const period = periodFor(month, comparison);
   const previousPeriod = { start: period.previousStart, end: period.previousEnd };
   const linkGroupCategory = "AO";
@@ -339,13 +341,13 @@ async function loadBrand(config: BrandConfig, month: string, comparison: "same" 
       const values = Array.from({ length: 8 }, (_, i) => numberAt(row, offset + i));
       const ad = kind === "link" ? adMap.get(stringAt(row, 1)) || [] : [];
       const prev = previousMap.get(id) || [];
-      return metricFromValues(config.key, `${kind}-${id}-${index}`, [...values, ad[0] || 0, ad[1] || 0, ad[2] || 0, ad[3] || 0, ad[4] || 0], dimensions, prev);
+      return metricFromValues(config.key, `${kind}-${id}-${index}`, [...values, ad[0] || 0, ad[1] || 0, ad[2] || 0, ad[3] || 0, ad[4] || 0], dimensions, prev, exchangeRate);
     }).filter((row) => row.category || row.spu || row.link);
   };
-  const daily = dailyRows.map((row) => ({ date: stringAt(row, 0), gmv: numberAt(row, 1), orders: numberAt(row, 2) }));
-  const previousDaily = prevDailyRows.map((row) => ({ date: stringAt(row, 0), gmv: numberAt(row, 1), orders: numberAt(row, 2) }));
-  const current = metricFromValues(config.key, `${config.key}-all`, [numberAt(currentAll[0], 0), numberAt(currentAll[0], 1), numberAt(currentAll[0], 2), numberAt(currentAll[0], 3), numberAt(currentAll[0], 4), numberAt(currentAll[0], 5), numberAt(currentAll[0], 6), numberAt(currentAll[0], 7), adTotal[0], adTotal[1], adTotal[2], adTotal[3], adTotal[4]], {}, [numberAt(prevAll[0], 0), numberAt(prevAll[0], 1)]);
-  const previous = metricFromValues(config.key, `${config.key}-previous`, [numberAt(prevAll[0], 0), numberAt(prevAll[0], 1), numberAt(prevAll[0], 2), numberAt(prevAll[0], 3), numberAt(prevAll[0], 4), numberAt(prevAll[0], 5), numberAt(prevAll[0], 6), numberAt(prevAll[0], 7)]);
+  const daily = dailyRows.map((row) => ({ date: stringAt(row, 0), gmv: numberAt(row, 1) * exchangeRate, orders: numberAt(row, 2) }));
+  const previousDaily = prevDailyRows.map((row) => ({ date: stringAt(row, 0), gmv: numberAt(row, 1) * exchangeRate, orders: numberAt(row, 2) }));
+  const current = metricFromValues(config.key, `${config.key}-all`, [numberAt(currentAll[0], 0), numberAt(currentAll[0], 1), numberAt(currentAll[0], 2), numberAt(currentAll[0], 3), numberAt(currentAll[0], 4), numberAt(currentAll[0], 5), numberAt(currentAll[0], 6), numberAt(currentAll[0], 7), adTotal[0], adTotal[1], adTotal[2], adTotal[3], adTotal[4]], {}, [numberAt(prevAll[0], 0), numberAt(prevAll[0], 1)], exchangeRate);
+  const previous = metricFromValues(config.key, `${config.key}-previous`, [numberAt(prevAll[0], 0), numberAt(prevAll[0], 1), numberAt(prevAll[0], 2), numberAt(prevAll[0], 3), numberAt(prevAll[0], 4), numberAt(prevAll[0], 5), numberAt(prevAll[0], 6), numberAt(prevAll[0], 7)], {}, [], exchangeRate);
   return {
     config,
     daily,
@@ -356,9 +358,9 @@ async function loadBrand(config: BrandConfig, month: string, comparison: "same" 
     spu: decorateRows(currentSpus, prevSpus, "spu"),
     links: decorateRows(currentLinks, prevLinks, "link"),
     ads: adsDetail.map((row, index) => ({
-      ...metricFromValues(config.key, `ad-${index}`, [numberAt(row, 3), 0, numberAt(row, 5), numberAt(row, 6), 0, 0, 0, 0, numberAt(row, 3), numberAt(row, 4), numberAt(row, 5), numberAt(row, 6), numberAt(row, 7)], { product: stringAt(row, 0), category: stringAt(row, 1), sku: stringAt(row, 2) }),
+      ...metricFromValues(config.key, `ad-${index}`, [numberAt(row, 3), 0, numberAt(row, 5), numberAt(row, 6), 0, 0, 0, 0, numberAt(row, 3), numberAt(row, 4), numberAt(row, 5), numberAt(row, 6), numberAt(row, 7)], { product: stringAt(row, 0), category: stringAt(row, 1), sku: stringAt(row, 2) }, [], exchangeRate),
     })),
-    actualGmv: numberAt(dms[0], 0),
+    actualGmv: numberAt(dms[0], 0) * exchangeRate,
   } satisfies BrandData;
 }
 
@@ -438,7 +440,7 @@ export function SalesDashboard() {
     let cancelled = false;
     setLoading(true);
     setError("");
-    Promise.all(BRANDS.map((item) => loadBrand(item, month, comparison)))
+    Promise.all(BRANDS.map((item) => loadBrand(item, month, comparison, DEFAULT_TWD_TO_CNY)))
       .then((result) => { if (!cancelled) setData(result); })
       .catch((reason) => { if (!cancelled) setError(reason instanceof Error ? reason.message : "数据同步失败"); })
       .finally(() => { if (!cancelled) setLoading(false); });
@@ -473,6 +475,7 @@ export function SalesDashboard() {
   const period = periodFor(month, comparison);
   const currentPage = PAGE_LABELS.find((item) => item.key === page) || PAGE_LABELS[0];
   return <main className="dashboard">
+    <div className="currency-note"><span>金额单位：人民币 CNY</span><small>源表 TWD 金额按运营口径 1 TWD = 0.21 CNY 换算；目标值保持人民币</small></div>
     <header className="topbar"><div><p className="eyebrow">SALES & COST EFFICIENCY</p><h1>台湾三品牌销售分析室</h1><p className="subtitle">聚焦费用投入对 GMV 的影响 · SKT / G2G / TP · {month.replace("-", "年")}月对比分析</p></div><button className="primary-button" onClick={() => setRefresh((value) => value + 1)}>＋ 更新销售数据</button></header>
     <section className="filter-bar"><div><label>品牌</label><select value={brand} onChange={(event) => setBrand(event.target.value as "ALL" | BrandKey)}><option value="ALL">全部品牌</option>{BRANDS.map((item) => <option value={item.key} key={item.key}>{item.key} · {item.name}</option>)}</select></div><div><label>主周期</label><input type="month" value={month} onChange={(event) => setMonth(event.target.value)} /></div><div><label>对比周期</label><select value={comparison} onChange={(event) => setComparison(event.target.value as "same" | "full")}><option value="same">上月同期</option><option value="full">上个完整月</option></select></div><div><label>店铺类型</label><select value={storeType} onChange={(event) => setStoreType(event.target.value)}><option>全部店铺</option><option>本土店</option><option>跨境店</option></select></div><div><label>SKU码</label><input value={sku} onChange={(event) => setSku(event.target.value)} placeholder="输入 SKU / 商品ID" /></div><div><label>产品名</label><input value={product} onChange={(event) => setProduct(event.target.value)} placeholder="搜索产品名" /></div><div><label>链接名</label><input value={link} onChange={(event) => setLink(event.target.value)} placeholder="搜索链接简称" /></div><div><label>品类</label><select value={category} onChange={(event) => setCategory(event.target.value)}><option value="">全部品类</option>{options.categories.map((item) => <option key={item}>{item}</option>)}</select></div><div><label>SPU</label><select value={spu} onChange={(event) => setSpu(event.target.value)}><option value="">全部SPU</option>{options.spus.map((item) => <option key={item}>{item}</option>)}</select></div><button className="reset-button" onClick={resetFilters}>重置筛选</button></section>
     <nav className="page-tabs">{PAGE_LABELS.map((item) => <button key={item.key} className={page === item.key ? "active" : ""} onClick={() => setPage(item.key)}><b>{item.number}</b><span>{item.label}</span><small>{item.note}</small></button>)}<span className="sync-state"><i className={error ? "error-dot" : ""} />{loading ? "同步中" : `截止 ${period.endDay} 日`}</span></nav>
