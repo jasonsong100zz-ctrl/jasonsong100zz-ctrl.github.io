@@ -1,0 +1,35 @@
+name: Refresh offline SKU sales
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 1 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout dashboard
+        uses: actions/checkout@v4
+
+      - name: Rebuild offline SKU summary
+        shell: pwsh
+        run: |
+          $env:OFFLINE_SKU_OUTPUT = Join-Path $env:GITHUB_WORKSPACE "public/offline_sku_sales.csv"
+          ./scripts/build-offline-sku-csv.ps1
+
+      - name: Commit changed summary
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/offline_sku_sales.csv
+          if (git diff --cached --quiet) {
+            Write-Host "No offline SKU changes."
+            exit 0
+          }
+          git commit -m "Refresh offline SKU sales"
+          git push
