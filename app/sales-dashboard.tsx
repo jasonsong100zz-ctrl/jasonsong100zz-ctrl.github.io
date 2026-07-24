@@ -292,6 +292,13 @@ async function querySheetOptional(sheet: string, query: string, spreadsheetId = 
   }
 }
 
+function addValues(target: number[], values: number[]) {
+  values.forEach((value, index) => {
+    target[index] = (target[index] || 0) + (value || 0);
+  });
+  return target;
+}
+
 function isoDate(year: number, month: number, day: number) {
   return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
@@ -408,7 +415,7 @@ function metricQuery(
 }
 
 async function loadBrand(config: BrandConfig, period: DateRange, previousPeriod: DateRange, exchangeRate = DEFAULT_TWD_TO_CNY) {
-  const linkGroupDetail = "A,C,D";
+  const linkGroupDetail = "C,D";
   const mappingQuery = config.key === "SKT"
     ? "select E,F,G where E is not null"
     : config.key === "G2G"
@@ -459,29 +466,43 @@ async function loadBrand(config: BrandConfig, period: DateRange, previousPeriod:
   const adMap = new Map<string, number[]>();
   adsDetail.forEach((row) => {
     const id = normalizeId(stringAt(row, 2));
-    adMap.set(id, [numberAt(row, 3), numberAt(row, 4), numberAt(row, 5), numberAt(row, 6), numberAt(row, 7)]);
+    if (!id) return;
+    adMap.set(id, addValues(adMap.get(id) || [], [numberAt(row, 3), numberAt(row, 4), numberAt(row, 5), numberAt(row, 6), numberAt(row, 7)]));
   });
   const previousAdMap = new Map<string, number[]>();
   adsPrevDetail.forEach((row) => {
     const id = normalizeId(stringAt(row, 2));
-    previousAdMap.set(id, [numberAt(row, 3), numberAt(row, 4), numberAt(row, 5), numberAt(row, 6), numberAt(row, 7)]);
+    if (!id) return;
+    previousAdMap.set(id, addValues(previousAdMap.get(id) || [], [numberAt(row, 3), numberAt(row, 4), numberAt(row, 5), numberAt(row, 6), numberAt(row, 7)]));
   });
   const decorateRows = (rows: GvizRow[], prevRows: GvizRow[]) => {
     const previousMap = new Map<string, number[]>();
     prevRows.forEach((row) => {
-      const key = normalizeId(stringAt(row, 1) || stringAt(row, 0));
-      previousMap.set(key, Array.from({ length: 8 }, (_, i) => numberAt(row, 3 + i)));
+      const key = normalizeId(stringAt(row, 0));
+      if (!key) return;
+      const previousValues = Array.from({ length: 8 }, (_, i) => numberAt(row, 2 + i));
+      previousMap.set(key, addValues(previousMap.get(key) || [], previousValues));
     });
-    return rows.map((row, index) => {
-      const rawId = stringAt(row, 1) || stringAt(row, 0);
-      const id = normalizeId(rawId);
+    const currentMap = new Map<string, { sourceProduct: string; values: number[] }>();
+    rows.forEach((row) => {
+      const id = normalizeId(stringAt(row, 0));
+      if (!id) return;
+      const currentValues = Array.from({ length: 8 }, (_, i) => numberAt(row, 2 + i));
+      const existing = currentMap.get(id);
+      if (existing) {
+        addValues(existing.values, currentValues);
+        if (!existing.sourceProduct) existing.sourceProduct = stringAt(row, 1);
+      } else {
+        currentMap.set(id, { sourceProduct: stringAt(row, 1), values: currentValues });
+      }
+    });
+    return Array.from(currentMap.entries()).map(([id, row], index) => {
       const match = matchMap.get(id);
-      const dimensions = { link: match?.link || stringAt(row, 0), id, product: match?.product || stringAt(row, 2), category: normalizeCategory(match?.category || FALLBACK_CATEGORY) };
-      const offset = 3;
-      const values = Array.from({ length: 8 }, (_, i) => numberAt(row, offset + i));
+      const product = match?.product || row.sourceProduct || id;
+      const dimensions = { link: product, id, product, category: normalizeCategory(match?.category || FALLBACK_CATEGORY) };
       const ad = adMap.get(id) || [];
       const prev = previousMap.get(id) || [];
-      return metricFromValues(config.key, `link-${id}-${index}`, [...values, ad[0] || 0, ad[1] || 0, ad[2] || 0, ad[3] || 0, ad[4] || 0], dimensions, prev, exchangeRate);
+      return metricFromValues(config.key, `link-${id}-${index}`, [...row.values, ad[0] || 0, ad[1] || 0, ad[2] || 0, ad[3] || 0, ad[4] || 0], dimensions, prev, exchangeRate);
     }).filter((row) => row.link || row.id);
   };
   const links = decorateRows(currentLinks, prevLinks);
