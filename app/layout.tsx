@@ -9,7 +9,7 @@ export async function generateMetadata(): Promise<Metadata> {
     requestHeaders.get("x-forwarded-proto") ||
     (host.startsWith("localhost") ? "http" : "https");
   const imageUrl = `${protocol}://${host}/og.png`;
-  const title = "台湾三品牌销售作战室";
+  const title = "台湾三品牌销售分析室";
   const description =
     "SKINTIFIC、GLAD2GLOW 与 TIME PHORIA 的 MTD 销售目标、ROI、环比和 SKU 动向看板。";
 

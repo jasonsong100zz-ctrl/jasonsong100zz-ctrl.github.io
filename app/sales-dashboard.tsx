@@ -363,7 +363,7 @@ export function SalesDashboard() {
             <span />
           </div>
           <p className="eyebrow">TAIWAN · SALES CONTROL</p>
-          <h1>三品牌销售<br />作战室</h1>
+          <h1>三品牌销售<br />分析室</h1>
           <p className="gate-copy">
             每日追踪 SKINTIFIC、GLAD2GLOW 与 TIME PHORIA 的销售目标、ROI
             和商品动向。
@@ -399,7 +399,7 @@ export function SalesDashboard() {
       <header className="topbar">
         <div>
           <p className="eyebrow">TAIWAN · THREE-BRAND SALES</p>
-          <h1>销售作战室</h1>
+          <h1>销售分析室</h1>
         </div>
         <div className="topbar-controls">
           <label className="month-control">
@@ -503,10 +503,10 @@ export function SalesDashboard() {
           <section className="runway-section">
             <div className="section-heading">
               <div>
-                <p className="eyebrow">BRAND TARGET RUNWAYS</p>
-                <h2>三品牌目标赛程</h2>
+              <p className="eyebrow">BRAND SCORE STRIPS</p>
+                <h2>三品牌销售达成</h2>
               </div>
-              <p>进度以 7 月目标 GMV 为终点线</p>
+              <p>以 7 月目标 GMV 为基准</p>
             </div>
             <div className="runways">
               {visibleBrands.map((brand) => {
