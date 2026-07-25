@@ -190,6 +190,9 @@ td.metric-value small { font-size: 9px; }
 .compact-metric-table table { table-layout: fixed; }
 .compact-metric-table { max-height: 1540px; overflow: auto; }
 .compact-metric-table thead th { position: sticky; top: 0; z-index: 4; box-shadow: 0 1px 0 var(--line); }
+.compact-metric-table th { height: 42px; white-space: normal; vertical-align: middle; }
+.compact-metric-table th .sort-button { white-space: normal; line-height: 1.15; }
+.compact-metric-table th .sort-button span { white-space: normal; word-break: keep-all; overflow-wrap: anywhere; }
 .compact-metric-table th,
 .compact-metric-table td { padding: 8px 7px; }
 .compact-metric-table td:first-child { min-width: 0; }
