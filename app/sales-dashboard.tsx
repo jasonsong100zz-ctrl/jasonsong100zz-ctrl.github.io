@@ -941,7 +941,8 @@ function Table({ rows, type }: { rows: MetricRow[]; type: "category" | "link" | 
     return sort.direction === "asc" ? result : -result;
   }).slice(0, 80);
   const sortBy = (column: SortColumn<MetricRow>) => setSort((current) => current.key === column.key ? { key: column.key, direction: current.direction === "asc" ? "desc" : "asc" } : { key: column.key, direction: column.defaultDirection || "desc" });
-  return <div className="table-wrap"><table><thead><tr>
+  const metricColumnCount = columns.length - (type === "link" || type === "ads" ? 2 : 1);
+  return <div className={`table-wrap compact-metric-table ${type}-table`}><table><colgroup><col className="primary-col" />{(type === "link" || type === "ads") && <col className="secondary-col" />}{Array.from({ length: metricColumnCount }, (_, index) => <col className="metric-col" key={index} />)}</colgroup><thead><tr>
     {columns.map((column) => <SortableHeader key={column.key} label={column.label} active={sort.key === column.key} direction={sort.direction} onClick={() => sortBy(column)} />)}
   </tr></thead><tbody>{sorted.map((row) => {
     const aov = row.orders > 0 ? row.gmv / row.orders : 0;
@@ -963,7 +964,7 @@ function Table({ rows, type }: { rows: MetricRow[]; type: "category" | "link" | 
     const cpc = row.clicks > 0 ? row.adSpend / row.clicks : 0;
     const previousCpc = row.previousClicks > 0 ? row.previousAdSpend / row.previousClicks : 0;
     return <tr key={row.key}>
-      <td><b>{type === "category" ? row.category : row.product || row.link || "—"}</b><small style={{ color: BRAND_COLORS[row.brand] }}>{row.brand}{type === "link" ? ` · ${row.category || FALLBACK_CATEGORY}` : ""}</small></td>
+      <td className="primary-cell"><b title={type === "category" ? row.category : row.product || row.link || "—"}>{type === "category" ? row.category : row.product || row.link || "—"}</b><small style={{ color: BRAND_COLORS[row.brand] }}>{row.brand}{type === "link" ? ` · ${row.category || FALLBACK_CATEGORY}` : ""}</small></td>
       {type === "link" && <td>{row.id || "—"}</td>}
       {type === "ads" && <td>{row.category || "—"}</td>}
       {type === "ads" ? <><MetricCell value={row.gmv > 0 ? row.gmv : null} previous={row.previousGmv > 0 ? row.previousGmv : null} format={(value) => formatMoney(value, true)} /><MetricCell value={row.adGmv} previous={row.previousAdGmv} format={(value) => formatMoney(value, true)} /><MetricCell value={adDealShare} previous={previousAdDealShare} format={levelPercent} mode="pp" /></> : <><MetricCell value={row.gmv} previous={row.previousGmv} format={(value) => formatMoney(value, true)} /><MetricCell value={row.orders} previous={row.previousOrders} format={formatNumber} /><MetricCell value={aov} previous={previousAov} format={formatMoney} /><MetricCell value={row.visitors} previous={row.previousVisitors} format={formatNumber} /><MetricCell value={ctr} previous={previousCtr} format={levelPercent} mode="pp" /><MetricCell value={row.cart} previous={row.previousCart} format={formatNumber} /><MetricCell value={cartRate} previous={previousCartRate} format={levelPercent} mode="pp" /><MetricCell value={cvr} previous={previousCvr} format={levelPercent} mode="pp" /><MetricCell value={roi} previous={previousRoi} format={rate} /><MetricCell value={fee} previous={previousFee} format={levelPercent} mode="pp" /><MetricCell value={share} previous={previousShare} format={levelPercent} mode="pp" /><MetricCell value={1 - share} previous={1 - previousShare} format={levelPercent} mode="pp" /></>}

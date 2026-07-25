@@ -187,6 +187,22 @@ td.up { color: var(--up); font-weight: 700; }
 td.down { color: var(--down); font-weight: 700; }
 td.metric-value b { color: var(--ink); font-size: 11px; font-weight: 800; }
 td.metric-value small { font-size: 9px; }
+.compact-metric-table table { table-layout: fixed; }
+.compact-metric-table th,
+.compact-metric-table td { padding-left: 7px; padding-right: 7px; }
+.compact-metric-table td:first-child { min-width: 0; }
+.compact-metric-table .primary-cell b,
+.compact-metric-table .primary-cell small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link-table table { min-width: 980px; }
+.link-table .primary-col { width: 12em; }
+.link-table .primary-cell { width: 12em; max-width: 12em; }
+.link-table .secondary-col { width: 120px; }
+.link-table .metric-col { width: auto; }
+.ads-table table { min-width: 1180px; }
+.ads-table .primary-col { width: 13em; }
+.ads-table .secondary-col { width: 7em; }
+.category-table table { min-width: 1120px; }
+.category-table .primary-col { width: 10em; }
 .channel-table table { min-width: 820px; table-layout: fixed; }
 .channel-table .channel-col-brand { width: 7%; }
 .channel-table .channel-col-sku { width: 14%; }
