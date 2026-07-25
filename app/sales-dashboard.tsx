@@ -948,7 +948,7 @@ function Table({ rows, type }: { rows: MetricRow[]; type: "category" | "link" | 
   const sorted = [...rows].sort((a, b) => {
     const result = compareSortValue(sortColumn.value(a), sortColumn.value(b));
     return sort.direction === "asc" ? result : -result;
-  }).slice(0, 80);
+  });
   const sortBy = (column: SortColumn<MetricRow>) => setSort((current) => current.key === column.key ? { key: column.key, direction: current.direction === "asc" ? "desc" : "asc" } : { key: column.key, direction: column.defaultDirection || "desc" });
   const metricColumnCount = columns.length - (type === "link" || type === "ads" ? 2 : 1);
   return <div className={`table-wrap compact-metric-table ${type}-table`}><table><colgroup><col className="primary-col" />{(type === "link" || type === "ads") && <col className="secondary-col" />}{Array.from({ length: metricColumnCount }, (_, index) => <col className="metric-col" key={index} />)}</colgroup><thead><tr>

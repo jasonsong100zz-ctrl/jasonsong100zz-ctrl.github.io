@@ -188,9 +188,13 @@ td.down { color: var(--down); font-weight: 700; }
 td.metric-value b { color: var(--ink); font-size: 11px; font-weight: 800; }
 td.metric-value small { font-size: 9px; }
 .compact-metric-table table { table-layout: fixed; }
+.compact-metric-table { max-height: 1540px; overflow: auto; }
+.compact-metric-table thead th { position: sticky; top: 0; z-index: 4; box-shadow: 0 1px 0 var(--line); }
 .compact-metric-table th,
-.compact-metric-table td { padding-left: 7px; padding-right: 7px; }
+.compact-metric-table td { padding: 8px 7px; }
 .compact-metric-table td:first-child { min-width: 0; }
+.compact-metric-table td b { font-size: 10.5px; line-height: 1.2; }
+.compact-metric-table td small { margin-top: 3px; font-size: 8.5px; line-height: 1.15; }
 .compact-metric-table .primary-cell b,
 .compact-metric-table .primary-cell small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .link-table table { min-width: 980px; }
