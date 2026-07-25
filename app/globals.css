@@ -136,9 +136,15 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .chart-card-title { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 9px; }
 .chart-card-title b { color: var(--ink); font-size: 12px; }
 .chart-card-title span { color: #8797ac; font-size: 10px; }
-.daily-compare-bars { display: flex; align-items: flex-end; gap: 4px; height: 206px; padding: 24px 3px 0; border-bottom: 1px solid #dfe7f2; }
-.day-group { display: flex; align-items: flex-end; justify-content: center; gap: 2px; flex: 1; height: 100%; min-width: 0; position: relative; padding-bottom: 15px; }
-.daily-mom { position: absolute; top: -18px; left: 50%; transform: translateX(-50%); font-size: 7px; font-style: normal; font-weight: 800; line-height: 1; white-space: nowrap; }
+.combo-chart { position: relative; padding: 0 34px 0 31px; }
+.gmv-axis, .percent-axis { position: absolute; top: 0; bottom: 0; display: flex; flex-direction: column; justify-content: space-between; padding: 24px 0 21px; color: #8797ac; font-size: 8px; font-weight: 700; line-height: 1; pointer-events: none; }
+.gmv-axis { left: 0; text-align: right; }
+.percent-axis { right: 0; text-align: left; }
+.daily-compare-bars { position: relative; display: flex; align-items: flex-end; gap: 4px; height: 224px; padding: 24px 3px 0; border-bottom: 1px solid #dfe7f2; background: repeating-linear-gradient(to bottom, #e8edf5 0 1px, transparent 1px 33.33%); }
+.daily-mom-line { position: absolute; inset: 24px 3px 21px; z-index: 4; overflow: visible; pointer-events: none; }
+.daily-mom-line polyline { fill: none; stroke: var(--brand-color); stroke-width: 2.2; vector-effect: non-scaling-stroke; opacity: .9; }
+.day-group { display: flex; align-items: flex-end; justify-content: center; gap: 2px; flex: 1; height: 100%; min-width: 0; position: relative; padding-bottom: 15px; z-index: 2; }
+.daily-mom { position: absolute; left: 50%; z-index: 5; transform: translateX(-50%); padding: 1px 2px; border-radius: 3px; background: rgba(255,255,255,.82); font-size: 7px; font-style: normal; font-weight: 800; line-height: 1; white-space: nowrap; }
 .day-group > small { position: absolute; bottom: 0; color: #9aa8ba; font-size: 8px; }
 .bar-slot { display: flex; align-items: center; justify-content: flex-end; flex-direction: column; width: 50%; height: 100%; min-width: 0; }
 .bar-slot b { width: 54px; max-width: 100%; overflow: hidden; color: var(--brand-color); font-size: 7px; font-weight: 700; line-height: 1; text-align: center; white-space: nowrap; }
