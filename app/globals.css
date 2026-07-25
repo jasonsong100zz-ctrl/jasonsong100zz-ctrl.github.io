@@ -141,7 +141,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .gmv-axis { left: 0; text-align: right; }
 .percent-axis { right: 0; text-align: left; }
 .daily-compare-bars { position: relative; display: flex; align-items: flex-end; gap: 4px; height: 224px; padding: 24px 3px 0; border-bottom: 1px solid #dfe7f2; background: repeating-linear-gradient(to bottom, #e8edf5 0 1px, transparent 1px 33.33%); }
-.daily-mom-line { position: absolute; inset: 24px 3px 21px; z-index: 4; overflow: visible; pointer-events: none; }
+.daily-mom-line { position: absolute; inset: 24px 3px 21px; z-index: 4; overflow: hidden; pointer-events: none; }
 .daily-mom-line polyline { fill: none; stroke: var(--brand-color); stroke-width: 2.2; vector-effect: non-scaling-stroke; opacity: .9; }
 .day-group { display: flex; align-items: flex-end; justify-content: center; gap: 2px; flex: 1; height: 100%; min-width: 0; position: relative; padding-bottom: 15px; z-index: 2; }
 .daily-mom { position: absolute; left: 50%; z-index: 5; transform: translateX(-50%); padding: 1px 2px; border-radius: 3px; background: rgba(255,255,255,.82); font-size: 7px; font-style: normal; font-weight: 800; line-height: 1; white-space: nowrap; }
