@@ -6,6 +6,7 @@ const SHEET_ID = "1yuJxg2PFQgAiOjnnCZVutQm-4I1q376c8eXZOjWQLN8";
 const DEFAULT_TWD_TO_CNY = 0.21;
 const PASSWORD_HASH =
   "04155b15a8f39ef5739243f83ea8350c4394a2b630f2af8c26cc4972af72c21c";
+const csvInFlight = new Map<string, Promise<string[][]>>();
 
 type BrandKey = "SKT" | "G2G" | "TP";
 type PageKey = "overview" | "category" | "link" | "ads" | "channels";
@@ -49,11 +50,14 @@ type BrandConfig = {
   name: string;
   goal: number;
   shopSheet: string;
+  shopGid: number;
   shopDate: string;
   shopGmv: string;
   shopOrders: string;
   linkSheet: string;
+  linkGid: number;
   adsSheet: string;
+  adsGid: number;
   adsDate: string;
   adsProduct: string;
   adsCategory: string;
@@ -64,6 +68,7 @@ type BrandConfig = {
   adsGmv: string;
   adsSpend: string;
   dmsSheet: string;
+  dmsGid: number;
   dmsDate: string;
   dmsGmv: string;
 };
@@ -104,6 +109,8 @@ const PAGE_LABELS: Array<{ key: PageKey; label: string; note: string; number: st
 ];
 
 const ONLINE_SKU_SHEET_ID = "16hb3YZRtu0jnU0hHeL1SGHirR4lWzItGlW1LQ0zj5GU";
+const MAPPING_GID = 1668472749;
+const MAINTAINED_MAPPING_GID = 305051712;
 
 const BRANDS: BrandConfig[] = [
   {
@@ -111,11 +118,14 @@ const BRANDS: BrandConfig[] = [
     name: "SKINTIFIC",
     goal: 2_500_000,
     shopSheet: "SKT-店铺维度每日",
+    shopGid: 1296056613,
     shopDate: "B",
     shopGmv: "C",
     shopOrders: "D",
     linkSheet: "SKT-店铺链接维度每日",
+    linkGid: 1109512359,
     adsSheet: "SKT-站内广告每日",
+    adsGid: 1227209277,
     adsDate: "B",
     adsProduct: "C",
     adsCategory: "D",
@@ -126,6 +136,7 @@ const BRANDS: BrandConfig[] = [
     adsGmv: "AB",
     adsSpend: "AD",
     dmsSheet: "SKT-店鋪實收（DMS）",
+    dmsGid: 0,
     dmsDate: "A",
     dmsGmv: "J",
   },
@@ -134,11 +145,14 @@ const BRANDS: BrandConfig[] = [
     name: "GLAD2GLOW",
     goal: 1_540_000,
     shopSheet: "G2G-店鋪維度每日",
+    shopGid: 651661997,
     shopDate: "A",
     shopGmv: "B",
     shopOrders: "C",
     linkSheet: "G2G-店鋪鏈接維度每日",
+    linkGid: 870428229,
     adsSheet: "G2G-站内廣告每日",
+    adsGid: 1775304605,
     adsDate: "A",
     adsProduct: "B",
     adsCategory: "C",
@@ -149,6 +163,7 @@ const BRANDS: BrandConfig[] = [
     adsGmv: "AA",
     adsSpend: "AC",
     dmsSheet: "G2G-店鋪實收（DMS）",
+    dmsGid: 1812440936,
     dmsDate: "A",
     dmsGmv: "I",
   },
@@ -157,11 +172,14 @@ const BRANDS: BrandConfig[] = [
     name: "TIME PHORIA",
     goal: 460_000,
     shopSheet: "TP-店鋪維度每日",
+    shopGid: 501805468,
     shopDate: "A",
     shopGmv: "B",
     shopOrders: "C",
     linkSheet: "TP-店鋪鏈接維度每日",
+    linkGid: 22105621,
     adsSheet: "TP-站内廣告每日",
+    adsGid: 1379096797,
     adsDate: "B",
     adsProduct: "C",
     adsCategory: "D",
@@ -172,6 +190,7 @@ const BRANDS: BrandConfig[] = [
     adsGmv: "AB",
     adsSpend: "AD",
     dmsSheet: "TP-店鋪實收（DMS）",
+    dmsGid: 1661028147,
     dmsDate: "A",
     dmsGmv: "E",
   },
@@ -297,6 +316,144 @@ function addValues(target: number[], values: number[]) {
     target[index] = (target[index] || 0) + (value || 0);
   });
   return target;
+}
+
+function parseCsvMatrix(text: string) {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let quoted = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    const next = text[index + 1];
+    if (quoted) {
+      if (char === '"' && next === '"') {
+        cell += '"';
+        index += 1;
+      } else if (char === '"') {
+        quoted = false;
+      } else {
+        cell += char;
+      }
+    } else if (char === '"') {
+      quoted = true;
+    } else if (char === ",") {
+      row.push(cell);
+      cell = "";
+    } else if (char === "\n") {
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = "";
+    } else if (char !== "\r") {
+      cell += char;
+    }
+  }
+  if (cell || row.length) {
+    row.push(cell);
+    rows.push(row);
+  }
+  return rows.filter((item) => item.some((cellValue) => cellValue.trim()));
+}
+
+async function loadSheetCsv(gid: number, spreadsheetId = SHEET_ID) {
+  const key = `${spreadsheetId}:${gid}`;
+  if (csvInFlight.has(key)) return csvInFlight.get(key)!;
+  const promise = fetch(`https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=${gid}`, { cache: "no-store" })
+    .then(async (response) => {
+      if (!response.ok) throw new Error(`Google Sheets CSV ${response.status}`);
+      return parseCsvMatrix(await response.text());
+    })
+    .finally(() => csvInFlight.delete(key));
+  csvInFlight.set(key, promise);
+  return promise;
+}
+
+function columnIndex(column: string) {
+  return column.toUpperCase().split("").reduce((sum, char) => sum * 26 + char.charCodeAt(0) - 64, 0) - 1;
+}
+
+function csvStringAt(row: string[] | undefined, column: string) {
+  return String(row?.[columnIndex(column)] ?? "").trim();
+}
+
+function csvNumberAt(row: string[] | undefined, column: string) {
+  const raw = csvStringAt(row, column).replace(/[,%\s]/g, "");
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function rowFromValues(values: unknown[]): GvizRow {
+  return { c: values.map((value) => ({ v: value })) };
+}
+
+function csvRowsInRange(rows: string[][], dateColumn: string, start: string, end: string) {
+  return rows.slice(1).filter((row) => {
+    const date = normalizeDateKey(csvStringAt(row, dateColumn));
+    return date >= start && date <= end;
+  });
+}
+
+function csvMetricRows(rows: string[][], dateColumn: string, start: string, end: string, groupColumns: string[] = []) {
+  const metricColumns = ["K", "R", "M", "N", "AD", "AH", "AK", "T"];
+  const groups = new Map<string, { dimensions: string[]; values: number[] }>();
+  csvRowsInRange(rows, dateColumn, start, end).forEach((row) => {
+    const dimensions = groupColumns.map((column) => csvStringAt(row, column));
+    const key = dimensions.join("\u0001") || "__all__";
+    const group = groups.get(key) || { dimensions, values: Array(metricColumns.length).fill(0) };
+    metricColumns.forEach((column, index) => {
+      group.values[index] += csvNumberAt(row, column);
+    });
+    groups.set(key, group);
+  });
+  return [...groups.values()].map((group) => rowFromValues([...group.dimensions, ...group.values]));
+}
+
+function csvDailyRows(rows: string[][], dateColumn: string, gmvColumn: string, ordersColumn: string, start: string, end: string) {
+  const groups = new Map<string, { gmv: number; orders: number }>();
+  csvRowsInRange(rows, dateColumn, start, end).forEach((row) => {
+    const date = normalizeDateKey(csvStringAt(row, dateColumn));
+    const group = groups.get(date) || { gmv: 0, orders: 0 };
+    group.gmv += csvNumberAt(row, gmvColumn);
+    group.orders += csvNumberAt(row, ordersColumn);
+    groups.set(date, group);
+  });
+  return [...groups.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([date, value]) => rowFromValues([date, value.gmv, value.orders]));
+}
+
+function csvAdsAggRows(rows: string[][], config: BrandConfig, start: string, end: string) {
+  const totals = [0, 0, 0, 0, 0];
+  csvRowsInRange(rows, config.adsDate, start, end).forEach((row) => {
+    [config.adsGmv, config.adsSpend, config.adsExposure, config.adsClicks, config.adsConversions].forEach((column, index) => {
+      totals[index] += csvNumberAt(row, column);
+    });
+  });
+  return [rowFromValues(totals)];
+}
+
+function csvAdsDetailRows(rows: string[][], config: BrandConfig, start: string, end: string) {
+  const groups = new Map<string, { dimensions: string[]; values: number[] }>();
+  csvRowsInRange(rows, config.adsDate, start, end).forEach((row) => {
+    const dimensions = [csvStringAt(row, config.adsProduct), csvStringAt(row, config.adsCategory), normalizeId(csvStringAt(row, config.adsId))];
+    const key = dimensions.join("\u0001");
+    const group = groups.get(key) || { dimensions, values: [0, 0, 0, 0, 0] };
+    [config.adsGmv, config.adsSpend, config.adsExposure, config.adsClicks, config.adsConversions].forEach((column, index) => {
+      group.values[index] += csvNumberAt(row, column);
+    });
+    groups.set(key, group);
+  });
+  return [...groups.values()].map((group) => rowFromValues([...group.dimensions, ...group.values]));
+}
+
+function csvSumRow(rows: string[][], dateColumn: string, valueColumn: string, start: string, end: string) {
+  const total = csvRowsInRange(rows, dateColumn, start, end).reduce((sum, row) => sum + csvNumberAt(row, valueColumn), 0);
+  return [rowFromValues([total])];
+}
+
+function csvSelectRows(rows: string[][], columns: string[], requiredColumn: string) {
+  return rows.slice(1)
+    .filter((row) => csvStringAt(row, requiredColumn))
+    .map((row) => rowFromValues(columns.map((column) => csvStringAt(row, column))));
 }
 
 function isoDate(year: number, month: number, day: number) {
@@ -440,37 +597,28 @@ function metricQuery(
 }
 
 async function loadBrand(config: BrandConfig, period: DateRange, previousPeriod: DateRange, exchangeRate = DEFAULT_TWD_TO_CNY) {
-  const linkGroupDetail = "C,D";
-  const mappingQuery = config.key === "SKT"
-    ? "select E,F,G where E is not null"
-    : config.key === "G2G"
-      ? "select R,S,T where R is not null"
-      : "select X,Y,Z where X is not null";
-  const maintainedMappingQuery = "select A,B,C,D where B is not null";
-  const aggregateQuery = (start: string, end: string, group = "") =>
-    metricQuery(config.linkSheet, "B", start, end, group);
-  const shopQuery = (start: string, end: string) =>
-    `select ${config.shopDate},sum(${config.shopGmv}),sum(${config.shopOrders}) where ${dateWhere(config.shopDate, start, end)} group by ${config.shopDate} order by ${config.shopDate} label sum(${config.shopGmv}) '',sum(${config.shopOrders}) ''`;
-  const adsAggQuery = (start: string, end: string) =>
-    `select sum(${config.adsGmv}),sum(${config.adsSpend}),sum(${config.adsExposure}),sum(${config.adsClicks}),sum(${config.adsConversions}) where ${dateWhere(config.adsDate, start, end)} label sum(${config.adsGmv}) '',sum(${config.adsSpend}) '',sum(${config.adsExposure}) '',sum(${config.adsClicks}) '',sum(${config.adsConversions}) ''`;
-  const adsDetailQuery = (start: string, end: string) => `select ${config.adsProduct},${config.adsCategory},${config.adsId},sum(${config.adsGmv}),sum(${config.adsSpend}),sum(${config.adsExposure}),sum(${config.adsClicks}),sum(${config.adsConversions}) where ${dateWhere(config.adsDate, start, end)} group by ${config.adsProduct},${config.adsCategory},${config.adsId} label sum(${config.adsGmv}) '',sum(${config.adsSpend}) '',sum(${config.adsExposure}) '',sum(${config.adsClicks}) '',sum(${config.adsConversions}) ''`;
-  const dmsQuery = `select sum(${config.dmsGmv}) where ${dateWhere(config.dmsDate, period.start, period.end)} label sum(${config.dmsGmv}) ''`;
-
-  const [dailyRows, prevDailyRows, currentAll, prevAll, currentLinks, prevLinks, adsAgg, adsPrev, adsDetail, adsPrevDetail, dms, mappingRows, maintainedMappingRows] = await Promise.all([
-    querySheet(config.shopSheet, shopQuery(period.start, period.end)),
-    querySheet(config.shopSheet, shopQuery(previousPeriod.start, previousPeriod.end)),
-    querySheet(config.linkSheet, aggregateQuery(period.start, period.end)),
-    querySheet(config.linkSheet, aggregateQuery(previousPeriod.start, previousPeriod.end)),
-    querySheet(config.linkSheet, aggregateQuery(period.start, period.end, linkGroupDetail)),
-    querySheet(config.linkSheet, aggregateQuery(previousPeriod.start, previousPeriod.end, linkGroupDetail)),
-    querySheet(config.adsSheet, adsAggQuery(period.start, period.end)),
-    querySheet(config.adsSheet, adsAggQuery(previousPeriod.start, previousPeriod.end)),
-    querySheet(config.adsSheet, adsDetailQuery(period.start, period.end)),
-    querySheet(config.adsSheet, adsDetailQuery(previousPeriod.start, previousPeriod.end)),
-    querySheet(config.dmsSheet, dmsQuery),
-    querySheet("匹配表", mappingQuery),
-    querySheetOptional("看板归类维护", maintainedMappingQuery),
+  const mappingColumns = config.key === "SKT" ? ["E", "F", "G"] : config.key === "G2G" ? ["R", "S", "T"] : ["X", "Y", "Z"];
+  const [shopRows, linkRows, adsRows, dmsRows, mappingCsvRows, maintainedCsvRows] = await Promise.all([
+    loadSheetCsv(config.shopGid),
+    loadSheetCsv(config.linkGid),
+    loadSheetCsv(config.adsGid),
+    loadSheetCsv(config.dmsGid),
+    loadSheetCsv(MAPPING_GID),
+    loadSheetCsv(MAINTAINED_MAPPING_GID),
   ]);
+  const dailyRows = csvDailyRows(shopRows, config.shopDate, config.shopGmv, config.shopOrders, period.start, period.end);
+  const prevDailyRows = csvDailyRows(shopRows, config.shopDate, config.shopGmv, config.shopOrders, previousPeriod.start, previousPeriod.end);
+  const currentAll = csvMetricRows(linkRows, "B", period.start, period.end);
+  const prevAll = csvMetricRows(linkRows, "B", previousPeriod.start, previousPeriod.end);
+  const currentLinks = csvMetricRows(linkRows, "B", period.start, period.end, ["C", "D"]);
+  const prevLinks = csvMetricRows(linkRows, "B", previousPeriod.start, previousPeriod.end, ["C", "D"]);
+  const adsAgg = csvAdsAggRows(adsRows, config, period.start, period.end);
+  const adsPrev = csvAdsAggRows(adsRows, config, previousPeriod.start, previousPeriod.end);
+  const adsDetail = csvAdsDetailRows(adsRows, config, period.start, period.end);
+  const adsPrevDetail = csvAdsDetailRows(adsRows, config, previousPeriod.start, previousPeriod.end);
+  const dms = csvSumRow(dmsRows, config.dmsDate, config.dmsGmv, period.start, period.end);
+  const mappingRows = csvSelectRows(mappingCsvRows, mappingColumns, mappingColumns[0]);
+  const maintainedMappingRows = csvSelectRows(maintainedCsvRows, ["A", "B", "C", "D"], "B");
 
   const matchMap = new Map<string, MatchRecord>();
   mappingRows.forEach((row) => {
@@ -794,8 +942,8 @@ function Table({ rows, type }: { rows: MetricRow[]; type: "category" | "link" | 
       <td><b>{type === "category" ? row.category : row.product || row.link || "—"}</b><small style={{ color: BRAND_COLORS[row.brand] }}>{row.brand}{type === "link" ? ` · ${row.category || FALLBACK_CATEGORY}` : ""}</small></td>
       {type === "link" && <td>{row.id || "—"}</td>}
       {type === "ads" && <td>{row.category || "—"}</td>}
-      {type === "ads" ? <><MetricCell value={row.gmv > 0 ? row.gmv : null} previous={row.previousGmv > 0 ? row.previousGmv : null} format={(value) => formatMoney(value, true)} /><MetricCell value={row.adGmv} previous={row.previousAdGmv} format={(value) => formatMoney(value, true)} /><MetricCell value={adDealShare} previous={previousAdDealShare} format={(value) => percent(value)} mode="pp" /></> : <><MetricCell value={row.gmv} previous={row.previousGmv} format={(value) => formatMoney(value, true)} /><MetricCell value={row.orders} previous={row.previousOrders} format={formatNumber} /><MetricCell value={aov} previous={previousAov} format={formatMoney} /><MetricCell value={row.visitors} previous={row.previousVisitors} format={formatNumber} /><MetricCell value={ctr} previous={previousCtr} format={(value) => percent(value)} mode="pp" /><MetricCell value={row.cart} previous={row.previousCart} format={formatNumber} /><MetricCell value={cartRate} previous={previousCartRate} format={(value) => percent(value)} mode="pp" /><MetricCell value={cvr} previous={previousCvr} format={(value) => percent(value)} mode="pp" /><MetricCell value={roi} previous={previousRoi} format={rate} /><MetricCell value={fee} previous={previousFee} format={(value) => percent(value)} mode="pp" /><MetricCell value={share} previous={previousShare} format={(value) => percent(value)} mode="pp" /><MetricCell value={1 - share} previous={1 - previousShare} format={(value) => percent(value)} mode="pp" /></>}
-      {type === "ads" && <><MetricCell value={row.adSpend} previous={row.previousAdSpend} format={(value) => formatMoney(value, true)} /><MetricCell value={roi} previous={previousRoi} format={rate} /><MetricCell value={row.exposure} previous={row.previousExposure} format={formatNumber} /><MetricCell value={row.clicks} previous={row.previousClicks} format={formatNumber} /><MetricCell value={ctr} previous={previousCtr} format={(value) => percent(value)} mode="pp" /><MetricCell value={cpc} previous={previousCpc} format={formatMoneyOneDecimal} /><MetricCell value={row.clicks > 0 ? row.conversions / row.clicks : 0} previous={row.previousClicks > 0 ? row.previousConversions / row.previousClicks : 0} format={(value) => percent(value)} mode="pp" /></>}
+      {type === "ads" ? <><MetricCell value={row.gmv > 0 ? row.gmv : null} previous={row.previousGmv > 0 ? row.previousGmv : null} format={(value) => formatMoney(value, true)} /><MetricCell value={row.adGmv} previous={row.previousAdGmv} format={(value) => formatMoney(value, true)} /><MetricCell value={adDealShare} previous={previousAdDealShare} format={levelPercent} mode="pp" /></> : <><MetricCell value={row.gmv} previous={row.previousGmv} format={(value) => formatMoney(value, true)} /><MetricCell value={row.orders} previous={row.previousOrders} format={formatNumber} /><MetricCell value={aov} previous={previousAov} format={formatMoney} /><MetricCell value={row.visitors} previous={row.previousVisitors} format={formatNumber} /><MetricCell value={ctr} previous={previousCtr} format={levelPercent} mode="pp" /><MetricCell value={row.cart} previous={row.previousCart} format={formatNumber} /><MetricCell value={cartRate} previous={previousCartRate} format={levelPercent} mode="pp" /><MetricCell value={cvr} previous={previousCvr} format={levelPercent} mode="pp" /><MetricCell value={roi} previous={previousRoi} format={rate} /><MetricCell value={fee} previous={previousFee} format={levelPercent} mode="pp" /><MetricCell value={share} previous={previousShare} format={levelPercent} mode="pp" /><MetricCell value={1 - share} previous={1 - previousShare} format={levelPercent} mode="pp" /></>}
+      {type === "ads" && <><MetricCell value={row.adSpend} previous={row.previousAdSpend} format={(value) => formatMoney(value, true)} /><MetricCell value={roi} previous={previousRoi} format={rate} /><MetricCell value={row.exposure} previous={row.previousExposure} format={formatNumber} /><MetricCell value={row.clicks} previous={row.previousClicks} format={formatNumber} /><MetricCell value={ctr} previous={previousCtr} format={levelPercent} mode="pp" /><MetricCell value={cpc} previous={previousCpc} format={formatMoneyOneDecimal} /><MetricCell value={row.clicks > 0 ? row.conversions / row.clicks : 0} previous={row.previousClicks > 0 ? row.previousConversions / row.previousClicks : 0} format={levelPercent} mode="pp" /></>}
     </tr>;
   })}</tbody></table></div>;
 }
@@ -906,9 +1054,9 @@ export function SalesDashboard() {
     {error && <div className="data-alert"><b>数据同步失败</b><span>{error}</span><button onClick={() => setRefresh((value) => value + 1)}>重新同步</button></div>}
     {page === "channels" ? <section className="data-page channel-page"><div className="section-title"><span>07</span><div><h2>线上 / 线下 SKU 销量对比</h2><p>线上数据来自台湾线上 SKU 销量表；线下汇总三品牌各通路原始 SKU 销量。</p></div><em>{channelLoading ? "同步中" : `${channelData.rows.length} 个商品ID`}</em></div>{channelError && <div className="data-alert"><b>销量数据同步失败</b><span>{channelError}</span></div>}{channelLoading && channelData.rows.length === 0 ? <div className="loading-state"><span className="loading-mark" /><div><strong>正在同步线上与线下 SKU 销量</strong><p>按主日期范围和环比日期范围汇总商品ID</p></div></div> : <ChannelTable rows={channelData.rows} brand={brand} />}</section> : loading && data.length === 0 ? <div className="loading-state"><span className="loading-mark" /><div><strong>正在同步销售与广告数据</strong><p>读取三品牌的店铺、链接、商品ID和广告明细</p></div></div> : <>
       {page === "overview" && <>
-        <section className="metric-grid"><MetricCard label="累计 GMV" value={formatMoney(total.gmv, true)} delta={ratio(total.gmv, total.previous)} note={`环比区间 ${formatMoney(total.previous, true)}`} color="#2364d8" /><MetricCard label="目标 GMV 达成" value={total.goal > 0 ? `${(total.gmv / total.goal * 100).toFixed(1)}%` : "—"} note={`目标 ${formatMoney(total.goal, true)}`} color="#ff766b" /><MetricCard label="综合费比" value={percent(total.gmv > 0 ? total.adSpend / total.gmv : null)} note="站内花费 / GMV" color="#1ba89c" /><MetricCard label="综合 ROI" value={rate(totalRoi)} note={`广告GMV ${formatMoney(total.adGmv, true)}`} color="#8d7bd8" /></section>
-        <section className="metric-grid secondary"><MetricCard label="订单量" value={formatNumber(total.orders)} note={`客单价 ${formatMoney(total.orders > 0 ? total.gmv / total.orders : 0)}`} color="#2364d8" /><MetricCard label="曝光量" value={formatNumber(total.exposure)} note={`访客 ${formatNumber(total.visitors)}`} color="#ff766b" /><MetricCard label="加购量" value={formatNumber(total.cart)} note={`加购率 ${percent(total.visitors > 0 ? total.cart / total.visitors : 0)}`} color="#1ba89c" /><MetricCard label="广告GMV占比" value={percent(total.gmv > 0 ? total.adGmv / total.gmv : 0)} note={`自然GMV ${formatMoney(Math.max(0, total.gmv - total.adGmv), true)}`} color="#8d7bd8" /></section>
-        <section className="brand-panels">{visible.map((item) => { const mom = ratio(item.current.gmv, item.previous.gmv); const share = total.gmv > 0 ? item.current.gmv / total.gmv : 0; const roi = item.current.adSpend > 0 ? item.actualGmv / item.current.adSpend : 0; const brandColor = BRAND_COLORS[item.config.key]; return <article className="brand-panel" style={{ "--brand-color": brandColor } as React.CSSProperties} key={item.config.key}><div className="panel-title"><b>{item.config.key}</b><span>{item.config.name}</span></div><div className="brand-main"><strong>{formatMoney(item.current.gmv, true)} GMV</strong><div><small>环比区间</small><b>{percent(mom)}</b></div></div><div className="brand-stats"><div><span>目标达成</span><b>{item.config.goal > 0 ? `${(item.current.gmv / item.config.goal * 100).toFixed(1)}%` : "—"}</b></div><div><span>品牌占比</span><b>{percent(share)}</b></div><div><span>综合ROI</span><b>{rate(roi)}</b></div></div><div className="brand-stats lower"><div><span>站内花费</span><b>{formatMoney(item.current.adSpend, true)}</b></div><div><span>广告GMV</span><b>{formatMoney(item.current.adGmv, true)}</b></div><div><span>自然GMV</span><b>{formatMoney(Math.max(0, item.current.gmv - item.current.adGmv), true)}</b></div><div><span>订单量</span><b>{formatNumber(item.current.orders)}</b></div></div><p>点击下方页面进入 {item.config.key} 的品类、链接和广告明细。</p></article>; })}</section>
+        <section className="metric-grid"><MetricCard label="累计 GMV" value={formatMoney(total.gmv, true)} delta={ratio(total.gmv, total.previous)} note={`环比区间 ${formatMoney(total.previous, true)}`} color="#2364d8" /><MetricCard label="目标 GMV 达成" value={levelPercent(total.goal > 0 ? total.gmv / total.goal : null)} note={`目标 ${formatMoney(total.goal, true)}`} color="#ff766b" /><MetricCard label="综合费比" value={levelPercent(total.gmv > 0 ? total.adSpend / total.gmv : null)} note="站内花费 / GMV" color="#1ba89c" /><MetricCard label="综合 ROI" value={rate(totalRoi)} note={`广告GMV ${formatMoney(total.adGmv, true)}`} color="#8d7bd8" /></section>
+        <section className="metric-grid secondary"><MetricCard label="订单量" value={formatNumber(total.orders)} note={`客单价 ${formatMoney(total.orders > 0 ? total.gmv / total.orders : 0)}`} color="#2364d8" /><MetricCard label="曝光量" value={formatNumber(total.exposure)} note={`访客 ${formatNumber(total.visitors)}`} color="#ff766b" /><MetricCard label="加购量" value={formatNumber(total.cart)} note={`加购率 ${levelPercent(total.visitors > 0 ? total.cart / total.visitors : null)}`} color="#1ba89c" /><MetricCard label="广告GMV占比" value={levelPercent(total.gmv > 0 ? total.adGmv / total.gmv : null)} note={`自然GMV ${formatMoney(Math.max(0, total.gmv - total.adGmv), true)}`} color="#8d7bd8" /></section>
+        <section className="brand-panels">{visible.map((item) => { const mom = ratio(item.current.gmv, item.previous.gmv); const share = total.gmv > 0 ? item.current.gmv / total.gmv : null; const roi = item.current.adSpend > 0 ? item.actualGmv / item.current.adSpend : null; const brandColor = BRAND_COLORS[item.config.key]; return <article className="brand-panel" style={{ "--brand-color": brandColor } as React.CSSProperties} key={item.config.key}><div className="panel-title"><b>{item.config.key}</b><span>{item.config.name}</span></div><div className="brand-main"><strong>{formatMoney(item.current.gmv, true)} GMV</strong><div><small>环比区间</small><b>{percent(mom)}</b></div></div><div className="brand-stats"><div><span>目标达成</span><b>{levelPercent(item.config.goal > 0 ? item.current.gmv / item.config.goal : null)}</b></div><div><span>品牌占比</span><b>{levelPercent(share)}</b></div><div><span>综合ROI</span><b>{rate(roi)}</b></div></div><div className="brand-stats lower"><div><span>站内花费</span><b>{formatMoney(item.current.adSpend, true)}</b></div><div><span>广告GMV</span><b>{formatMoney(item.current.adGmv, true)}</b></div><div><span>自然GMV</span><b>{formatMoney(Math.max(0, item.current.gmv - item.current.adGmv), true)}</b></div><div><span>订单量</span><b>{formatNumber(item.current.orders)}</b></div></div><p>点击下方页面进入 {item.config.key} 的品类、链接和广告明细。</p></article>; })}</section>
         <Insight brands={visible} />
         <section className="comparison-panel"><div className="section-title"><span>01</span><div><h2>品牌每日销售与环比</h2><p>每个品牌一行：左侧比较本期 / 环比区间 GMV，右侧展示站内费比及变化。</p></div><em>{rangeLabel(currentRange)} · {rangeLabel(previousRange)}</em></div><div className="brand-daily-rows">{visible.map((item) => <DailyBrandRow key={item.config.key} item={item} comparisonLabel={comparisonLabel} currentRange={currentRange} previousRange={previousRange} />)}</div></section>
         {brand !== "ALL" && <>
