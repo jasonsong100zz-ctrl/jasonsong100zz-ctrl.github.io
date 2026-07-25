@@ -887,6 +887,27 @@ function SortableHeader({ label, active, direction, onClick }: { label: string; 
   return <th aria-sort={active ? (direction === "asc" ? "ascending" : "descending") : "none"}><button className={`sort-button${active ? " active" : ""}`} type="button" onClick={onClick}><span>{label}</span><i>{active ? (direction === "asc" ? "↑" : "↓") : "↕"}</i></button></th>;
 }
 
+function excelCell(value: unknown) {
+  return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+
+function exportExcel(fileName: string, sheetName: string, headers: string[], rows: Array<Array<string | number | null | undefined>>) {
+  const table = `<table><thead><tr>${headers.map((header) => `<th>${excelCell(header)}</th>`).join("")}</tr></thead><tbody>${rows.map((row) => `<tr>${row.map((cell) => `<td>${excelCell(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+  const html = `<!doctype html><html><head><meta charset="UTF-8" /></head><body>${table}</body></html>`;
+  const blob = new Blob(["\ufeff", html], { type: "application/vnd.ms-excel;charset=utf-8" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = `${fileName.replace(/[\\/:*?"<>|]/g, "-")}.xls`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(link.href);
+}
+
+function TableExportButton({ label, onClick, count }: { label: string; onClick: () => void; count: number }) {
+  return <div className="table-actions"><span>{count} 条数据</span><button type="button" onClick={onClick}>导出 Excel</button></div>;
+}
+
 function deltaText(current: number | null | undefined, previous: number | null | undefined, mode: "ratio" | "pp" = "ratio") {
   if (current === null || current === undefined || previous === null || previous === undefined || !Number.isFinite(current) || !Number.isFinite(previous)) return "环比 —";
   if (mode === "pp") return `变化 ${current - previous >= 0 ? "+" : "−"}${Math.abs((current - previous) * 100).toFixed(1)}pp`;
@@ -1009,7 +1030,35 @@ function Table({ rows, type }: { rows: MetricRow[]; type: "category" | "link" | 
   });
   const sortBy = (column: SortColumn<MetricRow>) => setSort((current) => current.key === column.key ? { key: column.key, direction: current.direction === "asc" ? "desc" : "asc" } : { key: column.key, direction: column.defaultDirection || "desc" });
   const metricColumnCount = columns.length - (type === "link" || type === "ads" ? 2 : 1);
-  return <div className={`table-wrap compact-metric-table ${type}-table`}><table><colgroup><col className="primary-col" />{(type === "link" || type === "ads") && <col className="secondary-col" />}{Array.from({ length: metricColumnCount }, (_, index) => <col className="metric-col" key={index} />)}</colgroup><thead><tr>
+  const exportMetricTable = () => {
+    const headers = type === "ads"
+      ? ["产品/广告", "品类", "链接GMV", "链接GMV环比", "广告成交金额", "广告成交金额环比", "广告成交占比", "广告成交占比变化", "花费", "花费环比", "ROI", "ROI环比", "曝光", "曝光环比", "点击", "点击环比", "CTR", "CTR变化", "CPC", "CPC环比", "CVR", "CVR变化"]
+      : [type === "category" ? "品类" : "产品名", ...(type === "link" ? ["商品ID / ID"] : []), "GMV", "GMV环比", "站内花费", "站内花费环比", "订单", "订单环比", "客单价", "客单价环比", "访客", "访客环比", "CTR", "CTR变化", "加购", "加购环比", "加购率", "加购率变化", "CVR", "CVR变化", "ROI", "ROI环比", "费比", "费比变化", "广告GMV占比", "广告GMV占比变化", "自然GMV占比", "自然GMV占比变化"];
+    const exportRows = sorted.map((row) => {
+      const aov = row.orders > 0 ? row.gmv / row.orders : 0;
+      const previousAov = row.previousOrders > 0 ? row.previousGmv / row.previousOrders : 0;
+      const ctr = row.exposure > 0 ? row.clicks / row.exposure : 0;
+      const previousCtr = row.previousExposure > 0 ? row.previousClicks / row.previousExposure : 0;
+      const cartRate = row.visitors > 0 ? row.cart / row.visitors : 0;
+      const previousCartRate = row.previousVisitors > 0 ? row.previousCart / row.previousVisitors : 0;
+      const cvr = row.clicks > 0 ? row.orders / row.clicks : 0;
+      const previousCvr = row.previousClicks > 0 ? row.previousOrders / row.previousClicks : 0;
+      const roi = row.adSpend > 0 ? row.adGmv / row.adSpend : 0;
+      const previousRoi = row.previousAdSpend > 0 ? row.previousAdGmv / row.previousAdSpend : 0;
+      const fee = row.gmv > 0 ? row.adSpend / row.gmv : 0;
+      const previousFee = row.previousGmv > 0 ? row.previousAdSpend / row.previousGmv : 0;
+      const share = row.gmv > 0 ? row.adGmv / row.gmv : 0;
+      const previousShare = row.previousGmv > 0 ? row.previousAdGmv / row.previousGmv : 0;
+      const adDealShare = row.gmv > 0 ? row.adGmv / row.gmv : null;
+      const previousAdDealShare = row.previousGmv > 0 ? row.previousAdGmv / row.previousGmv : null;
+      const cpc = row.clicks > 0 ? row.adSpend / row.clicks : 0;
+      const previousCpc = row.previousClicks > 0 ? row.previousAdSpend / row.previousClicks : 0;
+      if (type === "ads") return [row.product || "—", row.category || "—", formatMoney(row.gmv, true), deltaText(row.gmv, row.previousGmv), formatMoney(row.adGmv, true), deltaText(row.adGmv, row.previousAdGmv), levelPercent(adDealShare), deltaText(adDealShare, previousAdDealShare, "pp"), formatMoney(row.adSpend, true), deltaText(row.adSpend, row.previousAdSpend), rate(roi), deltaText(roi, previousRoi), formatNumber(row.exposure), deltaText(row.exposure, row.previousExposure), formatNumber(row.clicks), deltaText(row.clicks, row.previousClicks), levelPercent(ctr), deltaText(ctr, previousCtr, "pp"), formatMoneyOneDecimal(cpc), deltaText(cpc, previousCpc), levelPercent(row.clicks > 0 ? row.conversions / row.clicks : 0), deltaText(row.clicks > 0 ? row.conversions / row.clicks : 0, row.previousClicks > 0 ? row.previousConversions / row.previousClicks : 0, "pp")];
+      return [type === "category" ? row.category : row.product || row.link || "—", ...(type === "link" ? [row.id || "—"] : []), formatMoney(row.gmv, true), deltaText(row.gmv, row.previousGmv), formatMoney(row.adSpend, true), deltaText(row.adSpend, row.previousAdSpend), formatNumber(row.orders), deltaText(row.orders, row.previousOrders), formatMoney(aov), deltaText(aov, previousAov), formatNumber(row.visitors), deltaText(row.visitors, row.previousVisitors), levelPercent(ctr), deltaText(ctr, previousCtr, "pp"), formatNumber(row.cart), deltaText(row.cart, row.previousCart), levelPercent(cartRate), deltaText(cartRate, previousCartRate, "pp"), levelPercent(cvr), deltaText(cvr, previousCvr, "pp"), rate(roi), deltaText(roi, previousRoi), levelPercent(fee), deltaText(fee, previousFee, "pp"), levelPercent(share), deltaText(share, previousShare, "pp"), levelPercent(1 - share), deltaText(1 - share, 1 - previousShare, "pp")];
+    });
+    exportExcel(`台湾线上销售分析-${type === "category" ? "品类进度" : type === "link" ? "链接明细" : "广告数据"}`, "数据", headers, exportRows);
+  };
+  return <><TableExportButton label="导出 Excel" onClick={exportMetricTable} count={sorted.length} /><div className={`table-wrap compact-metric-table ${type}-table`}><table><colgroup><col className="primary-col" />{(type === "link" || type === "ads") && <col className="secondary-col" />}{Array.from({ length: metricColumnCount }, (_, index) => <col className="metric-col" key={index} />)}</colgroup><thead><tr>
     {columns.map((column) => <SortableHeader key={column.key} label={column.label} active={sort.key === column.key} direction={sort.direction} onClick={() => sortBy(column)} />)}
   </tr></thead><tbody>{sorted.map((row) => {
     const aov = row.orders > 0 ? row.gmv / row.orders : 0;
@@ -1037,7 +1086,7 @@ function Table({ rows, type }: { rows: MetricRow[]; type: "category" | "link" | 
       {type === "ads" ? <><MetricCell value={row.gmv > 0 ? row.gmv : null} previous={row.previousGmv > 0 ? row.previousGmv : null} format={(value) => formatMoney(value, true)} /><MetricCell value={row.adGmv} previous={row.previousAdGmv} format={(value) => formatMoney(value, true)} /><MetricCell value={adDealShare} previous={previousAdDealShare} format={levelPercent} mode="pp" /></> : <><MetricCell value={row.gmv} previous={row.previousGmv} format={(value) => formatMoney(value, true)} /><MetricCell value={row.adSpend} previous={row.previousAdSpend} format={(value) => formatMoney(value, true)} /><MetricCell value={row.orders} previous={row.previousOrders} format={formatNumber} /><MetricCell value={aov} previous={previousAov} format={formatMoney} /><MetricCell value={row.visitors} previous={row.previousVisitors} format={formatNumber} /><MetricCell value={ctr} previous={previousCtr} format={levelPercent} mode="pp" /><MetricCell value={row.cart} previous={row.previousCart} format={formatNumber} /><MetricCell value={cartRate} previous={previousCartRate} format={levelPercent} mode="pp" /><MetricCell value={cvr} previous={previousCvr} format={levelPercent} mode="pp" /><MetricCell value={roi} previous={previousRoi} format={rate} /><MetricCell value={fee} previous={previousFee} format={levelPercent} mode="pp" /><MetricCell value={share} previous={previousShare} format={levelPercent} mode="pp" /><MetricCell value={1 - share} previous={1 - previousShare} format={levelPercent} mode="pp" /></>}
       {type === "ads" && <><MetricCell value={row.adSpend} previous={row.previousAdSpend} format={(value) => formatMoney(value, true)} /><MetricCell value={roi} previous={previousRoi} format={rate} /><MetricCell value={row.exposure} previous={row.previousExposure} format={formatNumber} /><MetricCell value={row.clicks} previous={row.previousClicks} format={formatNumber} /><MetricCell value={ctr} previous={previousCtr} format={levelPercent} mode="pp" /><MetricCell value={cpc} previous={previousCpc} format={formatMoneyOneDecimal} /><MetricCell value={row.clicks > 0 ? row.conversions / row.clicks : 0} previous={row.previousClicks > 0 ? row.previousConversions / row.previousClicks : 0} format={levelPercent} mode="pp" /></>}
     </tr>;
-  })}</tbody></table></div>;
+  })}</tbody></table></div></>;
 }
 
 function channelRollup(rows: ChannelSkuRow[], brand: "ALL" | BrandKey = "ALL", category?: string): ChannelRollupRow {
@@ -1108,13 +1157,22 @@ function ChannelCategoryTable({ rows, brand }: { rows: ChannelSkuRow[]; brand: "
     return sort.direction === "asc" ? result : -result;
   });
   const sortBy = (column: SortColumn<ChannelRollupRow>) => setSort((current) => current.key === column.key ? { key: column.key, direction: current.direction === "asc" ? "desc" : "asc" } : { key: column.key, direction: column.defaultDirection || "desc" });
-  return <div className="table-wrap channel-category-table"><table><thead><tr>{columns.filter((column) => column.key !== "total").map((column) => <SortableHeader key={column.key} label={column.label} active={sort.key === column.key} direction={sort.direction} onClick={() => sortBy(column)} />)}</tr></thead><tbody>{sorted.map((row) => {
+  const exportCategoryRows = () => {
+    exportExcel("台湾线上销售分析-线上线下品类销量对比", "品类销量对比", ["品牌", "品类", "线上销量", "线上销量环比", "线下销量", "线下销量环比", "线上－线下", "差距环比", "线上vs线下", "倍数环比"], sorted.map((row) => {
+      const gap = row.online - row.offline;
+      const previousGap = row.onlinePrevious - row.offlinePrevious;
+      const ratioValue = channelRatio(row);
+      const previousRatioValue = previousChannelRatio(row);
+      return [row.brand, row.category, formatNumber(row.online), deltaText(row.online, row.onlinePrevious), formatNumber(row.offline), deltaText(row.offline, row.offlinePrevious), `${gap >= 0 ? "+" : "−"}${formatNumber(Math.abs(gap))}`, deltaText(gap, previousGap), rate(ratioValue), deltaText(ratioValue, previousRatioValue)];
+    }));
+  };
+  return <><TableExportButton label="导出 Excel" onClick={exportCategoryRows} count={sorted.length} /><div className="table-wrap channel-category-table"><table><thead><tr>{columns.filter((column) => column.key !== "total").map((column) => <SortableHeader key={column.key} label={column.label} active={sort.key === column.key} direction={sort.direction} onClick={() => sortBy(column)} />)}</tr></thead><tbody>{sorted.map((row) => {
     const gap = row.online - row.offline;
     const previousGap = row.onlinePrevious - row.offlinePrevious;
     const ratioValue = channelRatio(row);
     const previousRatioValue = previousChannelRatio(row);
     return <tr key={row.key}><td><b style={{ color: BRAND_COLORS[row.brand] }}>{row.brand}</b></td><td><b>{row.category}</b></td><MetricCell value={row.online} previous={row.onlinePrevious} format={formatNumber} /><MetricCell value={row.offline} previous={row.offlinePrevious} format={formatNumber} /><MetricCell value={gap} previous={previousGap} format={(value) => `${value >= 0 ? "+" : "−"}${formatNumber(Math.abs(value))}`} /><MetricCell value={ratioValue} previous={previousRatioValue} format={rate} /></tr>;
-  })}</tbody></table></div>;
+  })}</tbody></table></div></>;
 }
 
 function ChannelTable({ rows, brand }: { rows: ChannelSkuRow[]; brand: "ALL" | BrandKey }) {
@@ -1136,13 +1194,22 @@ function ChannelTable({ rows, brand }: { rows: ChannelSkuRow[]; brand: "ALL" | B
     return sort.direction === "asc" ? result : -result;
   });
   const sortBy = (column: SortColumn<ChannelSkuRow>) => setSort((current) => current.key === column.key ? { key: column.key, direction: current.direction === "asc" ? "desc" : "asc" } : { key: column.key, direction: column.defaultDirection || "desc" });
-  return <div className="table-wrap channel-table"><table><colgroup><col className="channel-col-brand" /><col className="channel-col-category" /><col className="channel-col-sku" /><col className="channel-col-product" /><col className="channel-col-metric" /><col className="channel-col-metric" /><col className="channel-col-gap" /><col className="channel-col-share" /></colgroup><thead><tr>{columns.filter((column) => column.key !== "total").map((column) => <SortableHeader key={column.key} label={column.label} active={sort.key === column.key} direction={sort.direction} onClick={() => sortBy(column)} />)}</tr></thead><tbody>{sorted.map((row) => {
+  const exportSkuRows = () => {
+    exportExcel("台湾线上销售分析-线上线下SKU销量明细", "SKU销量明细", ["品牌", "品类", "SKU", "产品名", "线上销量", "线上销量环比", "线下销量", "线下销量环比", "线上－线下", "差距环比", "线上vs线下", "倍数环比"], sorted.map((row) => {
+      const gap = row.online - row.offline;
+      const previousGap = row.onlinePrevious - row.offlinePrevious;
+      const ratioValue = row.offline > 0 ? row.online / row.offline : null;
+      const previousRatioValue = row.offlinePrevious > 0 ? row.onlinePrevious / row.offlinePrevious : null;
+      return [row.brand, row.category, row.id, row.product, formatNumber(row.online), deltaText(row.online, row.onlinePrevious), formatNumber(row.offline), deltaText(row.offline, row.offlinePrevious), `${gap >= 0 ? "+" : "−"}${formatNumber(Math.abs(gap))}`, deltaText(gap, previousGap), rate(ratioValue), deltaText(ratioValue, previousRatioValue)];
+    }));
+  };
+  return <><TableExportButton label="导出 Excel" onClick={exportSkuRows} count={sorted.length} /><div className="table-wrap channel-table"><table><colgroup><col className="channel-col-brand" /><col className="channel-col-category" /><col className="channel-col-sku" /><col className="channel-col-product" /><col className="channel-col-metric" /><col className="channel-col-metric" /><col className="channel-col-gap" /><col className="channel-col-share" /></colgroup><thead><tr>{columns.filter((column) => column.key !== "total").map((column) => <SortableHeader key={column.key} label={column.label} active={sort.key === column.key} direction={sort.direction} onClick={() => sortBy(column)} />)}</tr></thead><tbody>{sorted.map((row) => {
     const gap = row.online - row.offline;
     const previousGap = row.onlinePrevious - row.offlinePrevious;
     const onlineOfflineRatio = row.offline > 0 ? row.online / row.offline : null;
     const previousOnlineOfflineRatio = row.offlinePrevious > 0 ? row.onlinePrevious / row.offlinePrevious : null;
     return <tr key={row.key}><td><b style={{ color: BRAND_COLORS[row.brand] }}>{row.brand}</b></td><td><b>{row.category}</b></td><td><b>{row.id}</b></td><td className="channel-product"><b title={row.product || row.id}>{row.product || row.id}</b></td><MetricCell value={row.online} previous={row.onlinePrevious} format={formatNumber} /><MetricCell value={row.offline} previous={row.offlinePrevious} format={formatNumber} /><MetricCell value={gap} previous={previousGap} format={(value) => `${value >= 0 ? "+" : "−"}${formatNumber(Math.abs(value))}`} /><MetricCell value={onlineOfflineRatio} previous={previousOnlineOfflineRatio} format={rate} /></tr>;
-  })}</tbody></table></div>;
+  })}</tbody></table></div></>;
 }
 
 export function SalesDashboard() {
