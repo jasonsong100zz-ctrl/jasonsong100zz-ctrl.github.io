@@ -71,6 +71,7 @@ type BrandConfig = {
   dmsGid: number;
   dmsDate: string;
   dmsGmv: string;
+  dmsVoucher: string;
 };
 type BrandData = {
   config: BrandConfig;
@@ -82,6 +83,9 @@ type BrandData = {
   links: MetricRow[];
   ads: MetricRow[];
   actualGmv: number;
+  previousActualGmv: number;
+  voucherShopee: number;
+  previousVoucherShopee: number;
 };
 
 type DateRange = { start: string; end: string };
@@ -139,6 +143,7 @@ const BRANDS: BrandConfig[] = [
     dmsGid: 0,
     dmsDate: "A",
     dmsGmv: "J",
+    dmsVoucher: "T",
   },
   {
     key: "G2G",
@@ -166,6 +171,7 @@ const BRANDS: BrandConfig[] = [
     dmsGid: 1812440936,
     dmsDate: "A",
     dmsGmv: "I",
+    dmsVoucher: "S",
   },
   {
     key: "TP",
@@ -193,6 +199,7 @@ const BRANDS: BrandConfig[] = [
     dmsGid: 1661028147,
     dmsDate: "A",
     dmsGmv: "E",
+    dmsVoucher: "O",
   },
 ];
 
@@ -421,6 +428,15 @@ function csvDailyRows(rows: string[][], dateColumn: string, gmvColumn: string, o
   return [...groups.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([date, value]) => rowFromValues([date, value.gmv, value.orders]));
 }
 
+function csvDailyGmvRows(rows: string[][], dateColumn: string, gmvColumn: string, start: string, end: string) {
+  const groups = new Map<string, number>();
+  csvRowsInRange(rows, dateColumn, start, end).forEach((row) => {
+    const date = normalizeDateKey(csvStringAt(row, dateColumn));
+    groups.set(date, (groups.get(date) || 0) + csvNumberAt(row, gmvColumn));
+  });
+  return [...groups.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([date, gmv]) => rowFromValues([date, gmv, 0]));
+}
+
 function csvAdsAggRows(rows: string[][], config: BrandConfig, start: string, end: string) {
   const totals = [0, 0, 0, 0, 0];
   csvRowsInRange(rows, config.adsDate, start, end).forEach((row) => {
@@ -611,8 +627,8 @@ async function loadBrand(config: BrandConfig, period: DateRange, previousPeriod:
     loadSheetCsv(MAPPING_GID),
     loadSheetCsv(MAINTAINED_MAPPING_GID),
   ]);
-  const dailyRows = csvDailyRows(shopRows, config.shopDate, config.shopGmv, config.shopOrders, period.start, period.end);
-  const prevDailyRows = csvDailyRows(shopRows, config.shopDate, config.shopGmv, config.shopOrders, previousPeriod.start, previousPeriod.end);
+  const dailyRows = csvDailyGmvRows(dmsRows, config.dmsDate, config.dmsGmv, period.start, period.end);
+  const prevDailyRows = csvDailyGmvRows(dmsRows, config.dmsDate, config.dmsGmv, previousPeriod.start, previousPeriod.end);
   const currentAll = csvMetricRows(linkRows, "B", period.start, period.end);
   const prevAll = csvMetricRows(linkRows, "B", previousPeriod.start, previousPeriod.end);
   const currentLinks = csvMetricRows(linkRows, "B", period.start, period.end, ["C", "D"]);
@@ -622,6 +638,9 @@ async function loadBrand(config: BrandConfig, period: DateRange, previousPeriod:
   const adsDetail = csvAdsDetailRows(adsRows, config, period.start, period.end);
   const adsPrevDetail = csvAdsDetailRows(adsRows, config, previousPeriod.start, previousPeriod.end);
   const dms = csvSumRow(dmsRows, config.dmsDate, config.dmsGmv, period.start, period.end);
+  const previousDms = csvSumRow(dmsRows, config.dmsDate, config.dmsGmv, previousPeriod.start, previousPeriod.end);
+  const dmsVoucher = csvSumRow(dmsRows, config.dmsDate, config.dmsVoucher, period.start, period.end);
+  const previousDmsVoucher = csvSumRow(dmsRows, config.dmsDate, config.dmsVoucher, previousPeriod.start, previousPeriod.end);
   const mappingRows = csvSelectRows(mappingCsvRows, mappingColumns, mappingColumns[0]);
   const maintainedMappingRows = csvSelectRows(maintainedCsvRows, ["A", "B", "C", "D"], "B");
 
@@ -713,6 +732,9 @@ async function loadBrand(config: BrandConfig, period: DateRange, previousPeriod:
       };
     }),
     actualGmv: numberAt(dms[0], 0) * exchangeRate,
+    previousActualGmv: numberAt(previousDms[0], 0) * exchangeRate,
+    voucherShopee: numberAt(dmsVoucher[0], 0) * exchangeRate,
+    previousVoucherShopee: numberAt(previousDmsVoucher[0], 0) * exchangeRate,
   } satisfies BrandData;
 }
 
@@ -890,17 +912,27 @@ function DailyBrandRow({ item, comparisonLabel, currentRange, previousRange }: {
   </article>;
 }
 
-function MetricCard({ label, value, delta, note, color }: { label: string; value: string; delta?: number | null; note?: string; color?: string }) {
+function MetricCard({ label, value, delta, note, color, deltaMode = "ratio" }: { label: string; value: string; delta?: number | null; note?: string; color?: string; deltaMode?: "ratio" | "pp" }) {
+  const deltaLabel = delta === undefined || delta === null
+    ? "—"
+    : deltaMode === "pp"
+      ? `${delta >= 0 ? "↑" : "↓"} ${Math.abs(delta * 100).toFixed(1)}pp`
+      : `${delta >= 0 ? "↑" : "↓"} ${Math.abs(delta * 100).toFixed(1)}%`;
   return <article className="metric-card" style={{ "--card-accent": color || "#2364d8" } as React.CSSProperties}>
     <span>{label}</span><strong>{value}</strong>
-    {delta !== undefined && <em className={delta !== null && delta >= 0 ? "up" : "down"}>{delta === null ? "—" : `${delta >= 0 ? "↑" : "↓"} ${Math.abs(delta * 100).toFixed(1)}%`}</em>}
+    {delta !== undefined && <em className={delta !== null && delta >= 0 ? "up" : "down"}>{deltaLabel}</em>}
     {note && <small>{note}</small>}
   </article>;
 }
 
+function PanelDelta({ value, previous, mode = "ratio" }: { value: number | null; previous: number | null; mode?: "ratio" | "pp" }) {
+  const delta = mode === "pp" && value !== null && previous !== null ? value - previous : ratio(value || 0, previous || 0);
+  return <small className={`panel-delta ${trendClass(delta)}`}>{deltaText(value, previous, mode)}</small>;
+}
+
 function Insight({ brands }: { brands: BrandData[] }) {
-  const sales = brands.reduce((sum, item) => sum + item.current.gmv, 0);
-  const previous = brands.reduce((sum, item) => sum + item.previous.gmv, 0);
+  const sales = brands.reduce((sum, item) => sum + item.actualGmv, 0);
+  const previous = brands.reduce((sum, item) => sum + item.previousActualGmv, 0);
   const adSpend = brands.reduce((sum, item) => sum + item.current.adSpend, 0);
   const actual = brands.reduce((sum, item) => sum + item.actualGmv, 0);
   const mom = ratio(sales, previous);
@@ -1062,8 +1094,25 @@ export function SalesDashboard() {
   }, [visible]);
   const matches = (row: MetricRow) => (!productId || `${row.id} ${row.link}`.toLowerCase().includes(productId.toLowerCase())) && (!product || `${row.product} ${row.link}`.toLowerCase().includes(product.toLowerCase())) && (!category || row.category === category);
   const rowsFor = (type: "category" | "link" | "ads") => visible.flatMap((item) => (type === "category" ? item.category : type === "link" ? item.links : item.ads).filter(matches));
-  const total = visible.reduce((acc, item) => ({ gmv: acc.gmv + item.current.gmv, previous: acc.previous + item.previous.gmv, orders: acc.orders + item.current.orders, exposure: acc.exposure + item.current.exposure, visitors: acc.visitors + item.current.visitors, cart: acc.cart + item.current.cart, adGmv: acc.adGmv + item.current.adGmv, adSpend: acc.adSpend + item.current.adSpend, actual: acc.actual + item.actualGmv, goal: acc.goal + item.config.goal }), { gmv: 0, previous: 0, orders: 0, exposure: 0, visitors: 0, cart: 0, adGmv: 0, adSpend: 0, actual: 0, goal: 0 });
-  const totalRoi = total.adSpend > 0 ? total.actual / total.adSpend : 0;
+  const total = visible.reduce((acc, item) => ({
+    gmv: acc.gmv + item.actualGmv,
+    previous: acc.previous + item.previousActualGmv,
+    orders: acc.orders + item.current.orders,
+    previousOrders: acc.previousOrders + item.previous.orders,
+    visitors: acc.visitors + item.current.visitors,
+    previousVisitors: acc.previousVisitors + item.previous.visitors,
+    cart: acc.cart + item.current.cart,
+    previousCart: acc.previousCart + item.previous.cart,
+    adGmv: acc.adGmv + item.current.adGmv,
+    previousAdGmv: acc.previousAdGmv + item.previous.adGmv,
+    adSpend: acc.adSpend + item.current.adSpend,
+    previousAdSpend: acc.previousAdSpend + item.previous.adSpend,
+    voucher: acc.voucher + item.voucherShopee,
+    previousVoucher: acc.previousVoucher + item.previousVoucherShopee,
+    goal: acc.goal + item.config.goal,
+  }), { gmv: 0, previous: 0, orders: 0, previousOrders: 0, visitors: 0, previousVisitors: 0, cart: 0, previousCart: 0, adGmv: 0, previousAdGmv: 0, adSpend: 0, previousAdSpend: 0, voucher: 0, previousVoucher: 0, goal: 0 });
+  const totalRoi = total.adSpend > 0 ? total.gmv / total.adSpend : 0;
+  const previousTotalRoi = total.previousAdSpend > 0 ? total.previous / total.previousAdSpend : null;
 
   async function digest(value: string) {
     const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
@@ -1088,9 +1137,9 @@ export function SalesDashboard() {
     {error && <div className="data-alert"><b>数据同步失败</b><span>{error}</span><button onClick={() => setRefresh((value) => value + 1)}>重新同步</button></div>}
     {page === "channels" ? <section className="data-page channel-page"><div className="section-title"><span>07</span><div><h2>线上 / 线下 SKU 销量对比</h2><p>线上数据来自台湾线上 SKU 销量表；线下汇总三品牌各通路原始 SKU 销量。</p></div><em>{channelLoading ? "同步中" : `${channelData.rows.length} 个商品ID`}</em></div>{channelError && <div className="data-alert"><b>销量数据同步失败</b><span>{channelError}</span></div>}{channelLoading && channelData.rows.length === 0 ? <div className="loading-state"><span className="loading-mark" /><div><strong>正在同步线上与线下 SKU 销量</strong><p>按主日期范围和环比日期范围汇总商品ID</p></div></div> : <ChannelTable rows={channelData.rows} brand={brand} />}</section> : loading && data.length === 0 ? <div className="loading-state"><span className="loading-mark" /><div><strong>正在同步销售与广告数据</strong><p>读取三品牌的店铺、链接、商品ID和广告明细</p></div></div> : <>
       {page === "overview" && <>
-        <section className="metric-grid"><MetricCard label="累计 GMV" value={formatMoney(total.gmv, true)} delta={ratio(total.gmv, total.previous)} note={`环比区间 ${formatMoney(total.previous, true)}`} color="#2364d8" /><MetricCard label="目标 GMV 达成" value={levelPercent(total.goal > 0 ? total.gmv / total.goal : null)} note={`目标 ${formatMoney(total.goal, true)}`} color="#ff766b" /><MetricCard label="综合费比" value={levelPercent(total.gmv > 0 ? total.adSpend / total.gmv : null)} note="站内花费 / GMV" color="#1ba89c" /><MetricCard label="综合 ROI" value={rate(totalRoi)} note={`广告GMV ${formatMoney(total.adGmv, true)}`} color="#8d7bd8" /></section>
-        <section className="metric-grid secondary"><MetricCard label="订单量" value={formatNumber(total.orders)} note={`客单价 ${formatMoney(total.orders > 0 ? total.gmv / total.orders : 0)}`} color="#2364d8" /><MetricCard label="曝光量" value={formatNumber(total.exposure)} note={`访客 ${formatNumber(total.visitors)}`} color="#ff766b" /><MetricCard label="加购量" value={formatNumber(total.cart)} note={`加购率 ${levelPercent(total.visitors > 0 ? total.cart / total.visitors : null)}`} color="#1ba89c" /><MetricCard label="广告GMV占比" value={levelPercent(total.gmv > 0 ? total.adGmv / total.gmv : null)} note={`自然GMV ${formatMoney(Math.max(0, total.gmv - total.adGmv), true)}`} color="#8d7bd8" /></section>
-        <section className="brand-panels">{visible.map((item) => { const mom = ratio(item.current.gmv, item.previous.gmv); const share = total.gmv > 0 ? item.current.gmv / total.gmv : null; const roi = item.current.adSpend > 0 ? item.actualGmv / item.current.adSpend : null; const brandColor = BRAND_COLORS[item.config.key]; return <article className="brand-panel" style={{ "--brand-color": brandColor } as React.CSSProperties} key={item.config.key}><div className="panel-title"><b>{item.config.key}</b><span>{item.config.name}</span></div><div className="brand-main"><strong>{formatMoney(item.current.gmv, true)} GMV</strong><div><small>环比区间</small><b>{percent(mom)}</b></div></div><div className="brand-stats"><div><span>目标达成</span><b>{levelPercent(item.config.goal > 0 ? item.current.gmv / item.config.goal : null)}</b></div><div><span>品牌占比</span><b>{levelPercent(share)}</b></div><div><span>综合ROI</span><b>{rate(roi)}</b></div></div><div className="brand-stats lower"><div><span>站内花费</span><b>{formatMoney(item.current.adSpend, true)}</b></div><div><span>广告GMV</span><b>{formatMoney(item.current.adGmv, true)}</b></div><div><span>自然GMV</span><b>{formatMoney(Math.max(0, item.current.gmv - item.current.adGmv), true)}</b></div><div><span>订单量</span><b>{formatNumber(item.current.orders)}</b></div></div><p>点击下方页面进入 {item.config.key} 的品类、链接和广告明细。</p></article>; })}</section>
+        <section className="metric-grid"><MetricCard label="累计 GMV" value={formatMoney(total.gmv, true)} delta={ratio(total.gmv, total.previous)} note={`DMS折后实收 · 环比区间 ${formatMoney(total.previous, true)}`} color="#2364d8" /><MetricCard label="目标 GMV 达成" value={levelPercent(total.goal > 0 ? total.gmv / total.goal : null)} delta={total.goal > 0 ? (total.gmv - total.previous) / total.goal : null} deltaMode="pp" note={`目标 ${formatMoney(total.goal, true)}`} color="#ff766b" /><MetricCard label="综合费比" value={levelPercent(total.gmv > 0 ? total.adSpend / total.gmv : null)} delta={(total.gmv > 0 && total.previous > 0) ? total.adSpend / total.gmv - total.previousAdSpend / total.previous : null} deltaMode="pp" note="站内花费 / DMS GMV" color="#1ba89c" /><MetricCard label="综合 ROI" value={rate(totalRoi)} delta={ratio(totalRoi, previousTotalRoi || 0)} note={`DMS GMV / 站内花费`} color="#8d7bd8" /></section>
+        <section className="metric-grid secondary"><MetricCard label="订单量" value={formatNumber(total.orders)} delta={ratio(total.orders, total.previousOrders)} note={`客单价 ${formatMoney(total.orders > 0 ? total.gmv / total.orders : 0)}`} color="#2364d8" /><MetricCard label="虾皮补贴券" value={formatMoney(total.voucher, true)} delta={ratio(total.voucher, total.previousVoucher)} note={`Voucher from shopee · 占GMV ${levelPercent(total.gmv > 0 ? total.voucher / total.gmv : null)}`} color="#ff766b" /><MetricCard label="加购量" value={formatNumber(total.cart)} delta={ratio(total.cart, total.previousCart)} note={`加购率 ${levelPercent(total.visitors > 0 ? total.cart / total.visitors : null)}`} color="#1ba89c" /><MetricCard label="广告GMV占比" value={levelPercent(total.gmv > 0 ? total.adGmv / total.gmv : null)} delta={(total.gmv > 0 && total.previous > 0) ? total.adGmv / total.gmv - total.previousAdGmv / total.previous : null} deltaMode="pp" note={`自然GMV ${formatMoney(Math.max(0, total.gmv - total.adGmv), true)}`} color="#8d7bd8" /></section>
+        <section className="brand-panels">{visible.map((item) => { const mom = ratio(item.actualGmv, item.previousActualGmv); const share = total.gmv > 0 ? item.actualGmv / total.gmv : null; const previousShare = total.previous > 0 ? item.previousActualGmv / total.previous : null; const roi = item.current.adSpend > 0 ? item.actualGmv / item.current.adSpend : null; const previousRoi = item.previous.adSpend > 0 ? item.previousActualGmv / item.previous.adSpend : null; const goalRate = item.config.goal > 0 ? item.actualGmv / item.config.goal : null; const previousGoalRate = item.config.goal > 0 ? item.previousActualGmv / item.config.goal : null; const organicGmv = Math.max(0, item.actualGmv - item.current.adGmv); const previousOrganicGmv = Math.max(0, item.previousActualGmv - item.previous.adGmv); const brandColor = BRAND_COLORS[item.config.key]; return <article className="brand-panel" style={{ "--brand-color": brandColor } as React.CSSProperties} key={item.config.key}><div className="panel-title"><b>{item.config.key}</b><span>{item.config.name}</span></div><div className="brand-main"><strong>{formatMoney(item.actualGmv, true)} GMV</strong><div><small>环比区间</small><b>{percent(mom)}</b></div></div><div className="brand-stats"><div><span>目标达成</span><b>{levelPercent(goalRate)}</b><PanelDelta value={goalRate} previous={previousGoalRate} mode="pp" /></div><div><span>品牌占比</span><b>{levelPercent(share)}</b><PanelDelta value={share} previous={previousShare} mode="pp" /></div><div><span>综合ROI</span><b>{rate(roi)}</b><PanelDelta value={roi} previous={previousRoi} /></div></div><div className="brand-stats lower"><div><span>站内花费</span><b>{formatMoney(item.current.adSpend, true)}</b><PanelDelta value={item.current.adSpend} previous={item.previous.adSpend} /></div><div><span>广告GMV</span><b>{formatMoney(item.current.adGmv, true)}</b><PanelDelta value={item.current.adGmv} previous={item.previous.adGmv} /></div><div><span>自然GMV</span><b>{formatMoney(organicGmv, true)}</b><PanelDelta value={organicGmv} previous={previousOrganicGmv} /></div><div><span>订单量</span><b>{formatNumber(item.current.orders)}</b><PanelDelta value={item.current.orders} previous={item.previous.orders} /></div></div><p>点击下方页面进入 {item.config.key} 的品类、链接和广告明细。</p></article>; })}</section>
         <Insight brands={visible} />
         <section className="comparison-panel"><div className="section-title"><span>01</span><div><h2>品牌每日销售与环比</h2><p>每个品牌一行：左侧比较本期 / 环比区间 GMV，右侧展示站内费比及变化。</p></div><em>{rangeLabel(currentRange)} · {rangeLabel(previousRange)}</em></div><div className="brand-daily-rows">{visible.map((item) => <DailyBrandRow key={item.config.key} item={item} comparisonLabel={comparisonLabel} currentRange={currentRange} previousRange={previousRange} />)}</div></section>
         {brand !== "ALL" && <>
