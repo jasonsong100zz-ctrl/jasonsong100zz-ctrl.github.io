@@ -803,26 +803,27 @@ function Table({ rows, type }: { rows: MetricRow[]; type: "category" | "link" | 
 function ChannelTable({ rows, brand }: { rows: ChannelSkuRow[]; brand: "ALL" | BrandKey }) {
   const [sort, setSort] = useState<SortState>({ key: "total", direction: "desc" });
   const columns: SortColumn<ChannelSkuRow>[] = [
-    { key: "sku", label: "品牌 / SKU", value: (row) => `${row.brand} ${row.id}`, defaultDirection: "asc" },
+    { key: "brand", label: "品牌", value: (row) => row.brand, defaultDirection: "asc" },
+    { key: "sku", label: "SKU", value: (row) => row.id, defaultDirection: "asc" },
     { key: "product", label: "产品名", value: (row) => row.product, defaultDirection: "asc" },
     { key: "online", label: "线上销量", value: (row) => row.online },
     { key: "offline", label: "线下销量", value: (row) => row.offline },
     { key: "gap", label: "线上－线下", value: (row) => row.online - row.offline },
-    { key: "onlineShare", label: "线上占比", value: (row) => row.online + row.offline > 0 ? row.online / (row.online + row.offline) : null },
+    { key: "onlineOfflineRatio", label: "线上vs线下", value: (row) => row.offline > 0 ? row.online / row.offline : null },
     { key: "total", label: "总销量", value: (row) => row.online + row.offline },
   ];
-  const sortColumn = columns.find((column) => column.key === sort.key) || columns[8];
+  const sortColumn = columns.find((column) => column.key === sort.key) || columns[columns.length - 1];
   const sorted = rows.filter((row) => brand === "ALL" || row.brand === brand).sort((a, b) => {
     const result = compareSortValue(sortColumn.value(a), sortColumn.value(b));
     return sort.direction === "asc" ? result : -result;
   }).slice(0, 120);
   const sortBy = (column: SortColumn<ChannelSkuRow>) => setSort((current) => current.key === column.key ? { key: column.key, direction: current.direction === "asc" ? "desc" : "asc" } : { key: column.key, direction: column.defaultDirection || "desc" });
-  return <div className="table-wrap channel-table"><table><colgroup><col className="channel-col-sku" /><col className="channel-col-product" /><col className="channel-col-metric" /><col className="channel-col-metric" /><col className="channel-col-gap" /><col className="channel-col-share" /></colgroup><thead><tr>{columns.filter((column) => column.key !== "total").map((column) => <SortableHeader key={column.key} label={column.label} active={sort.key === column.key} direction={sort.direction} onClick={() => sortBy(column)} />)}</tr></thead><tbody>{sorted.map((row) => {
+  return <div className="table-wrap channel-table"><table><colgroup><col className="channel-col-brand" /><col className="channel-col-sku" /><col className="channel-col-product" /><col className="channel-col-metric" /><col className="channel-col-metric" /><col className="channel-col-gap" /><col className="channel-col-share" /></colgroup><thead><tr>{columns.filter((column) => column.key !== "total").map((column) => <SortableHeader key={column.key} label={column.label} active={sort.key === column.key} direction={sort.direction} onClick={() => sortBy(column)} />)}</tr></thead><tbody>{sorted.map((row) => {
     const gap = row.online - row.offline;
     const previousGap = row.onlinePrevious - row.offlinePrevious;
-    const total = row.online + row.offline;
-    const previousTotal = row.onlinePrevious + row.offlinePrevious;
-    return <tr key={row.key}><td><b style={{ color: BRAND_COLORS[row.brand] }}>{row.brand} · {row.id}</b><small>按 SKU 码匹配</small></td><td className="channel-product"><b title={row.product || row.id}>{row.product || row.id}</b><small>产品名</small></td><MetricCell value={row.online} previous={row.onlinePrevious} format={formatNumber} /><MetricCell value={row.offline} previous={row.offlinePrevious} format={formatNumber} /><MetricCell value={gap} previous={previousGap} format={(value) => `${value >= 0 ? "+" : "−"}${formatNumber(Math.abs(value))}`} /><MetricCell value={total > 0 ? row.online / total : null} previous={previousTotal > 0 ? row.onlinePrevious / previousTotal : null} format={(value) => percent(value)} mode="pp" /></tr>;
+    const onlineOfflineRatio = row.offline > 0 ? row.online / row.offline : null;
+    const previousOnlineOfflineRatio = row.offlinePrevious > 0 ? row.onlinePrevious / row.offlinePrevious : null;
+    return <tr key={row.key}><td><b style={{ color: BRAND_COLORS[row.brand] }}>{row.brand}</b></td><td><b>{row.id}</b></td><td className="channel-product"><b title={row.product || row.id}>{row.product || row.id}</b></td><MetricCell value={row.online} previous={row.onlinePrevious} format={formatNumber} /><MetricCell value={row.offline} previous={row.offlinePrevious} format={formatNumber} /><MetricCell value={gap} previous={previousGap} format={(value) => `${value >= 0 ? "+" : "−"}${formatNumber(Math.abs(value))}`} /><MetricCell value={onlineOfflineRatio} previous={previousOnlineOfflineRatio} format={rate} /></tr>;
   })}</tbody></table></div>;
 }
 
