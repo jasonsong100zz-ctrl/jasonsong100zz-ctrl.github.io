@@ -95,6 +95,17 @@ type ChannelSkuRow = {
   brand: BrandKey;
   id: string;
   product: string;
+  category: string;
+  online: number;
+  onlinePrevious: number;
+  offline: number;
+  offlinePrevious: number;
+};
+
+type ChannelRollupRow = {
+  key: string;
+  brand: BrandKey;
+  category: string;
   online: number;
   onlinePrevious: number;
   offline: number;
@@ -746,6 +757,20 @@ function brandFromValue(value: string): BrandKey | null {
   return null;
 }
 
+function channelCategoryFromProduct(product: string, sku = "") {
+  const text = normalizeCategory(`${product} ${sku}`).toLowerCase();
+  if (/氣墊|气垫|粉底|遮瑕|粉餅|粉饼|彩妆|唇|口紅|口红|唇釉|唇膏|腮紅|腮红/.test(text)) return "彩妆";
+  if (/防曬|防晒|spf|隔離|隔离/.test(text)) return "防晒";
+  if (/面膜|泥膜|膜棒|凍膜|冻膜/.test(text)) return "面膜";
+  if (/面霜|乳霜|保濕霜|保湿霜|霜/.test(text)) return "面霜";
+  if (/精華|精华|安瓶|精粹|serum/.test(text)) return "精华";
+  if (/化妝水|化妆水|爽膚水|爽肤水|噴霧|喷雾|toner/.test(text)) return "爽肤水";
+  if (/洗面|潔面|洁面|卸妝|卸妆|清潔|清洁/.test(text)) return "洁面";
+  if (/眼霜|眼膜|眼/.test(text)) return "眼部护理";
+  if (/套組|套组|組合|组合|禮盒|礼盒|旅行|集合|鏈子版|链子版/.test(text)) return "套组";
+  return FALLBACK_CATEGORY;
+}
+
 function skuQuery(start: string, end: string) {
   return `select B,sum(C),D,E where ${dateWhere("A", start, end)} group by B,D,E label sum(C) ''`;
 }
@@ -828,7 +853,8 @@ async function loadChannelData(period: DateRange, previousPeriod: DateRange): Pr
       const onlinePrev = onlinePrevious.get(config.key)!.get(id);
       const offline = currentOffline.get(id);
       const offlinePrev = previousOffline.get(id);
-      rows.push({ key: `${config.key}-${id}`, brand: config.key, id, product: online?.product || onlinePrev?.product || offline?.product || offlinePrev?.product || productMap.get(config.key)?.get(id) || id, online: online?.quantity || 0, onlinePrevious: onlinePrev?.quantity || 0, offline: offline?.quantity || 0, offlinePrevious: offlinePrev?.quantity || 0 });
+      const product = online?.product || onlinePrev?.product || offline?.product || offlinePrev?.product || productMap.get(config.key)?.get(id) || id;
+      rows.push({ key: `${config.key}-${id}`, brand: config.key, id, product, category: channelCategoryFromProduct(product, id), online: online?.quantity || 0, onlinePrevious: onlinePrev?.quantity || 0, offline: offline?.quantity || 0, offlinePrevious: offlinePrev?.quantity || 0 });
     });
   }
   return { rows };
@@ -1014,10 +1040,88 @@ function Table({ rows, type }: { rows: MetricRow[]; type: "category" | "link" | 
   })}</tbody></table></div>;
 }
 
+function channelRollup(rows: ChannelSkuRow[], brand: "ALL" | BrandKey = "ALL", category?: string): ChannelRollupRow {
+  return rows
+    .filter((row) => (brand === "ALL" || row.brand === brand) && (!category || row.category === category))
+    .reduce((acc, row) => ({ ...acc, online: acc.online + row.online, onlinePrevious: acc.onlinePrevious + row.onlinePrevious, offline: acc.offline + row.offline, offlinePrevious: acc.offlinePrevious + row.offlinePrevious }), { key: `${brand}-${category || "all"}`, brand: brand === "ALL" ? "SKT" : brand, category: category || "全部品类", online: 0, onlinePrevious: 0, offline: 0, offlinePrevious: 0 });
+}
+
+function channelRatio(row: Pick<ChannelRollupRow, "online" | "offline">) {
+  return row.offline > 0 ? row.online / row.offline : null;
+}
+
+function previousChannelRatio(row: Pick<ChannelRollupRow, "onlinePrevious" | "offlinePrevious">) {
+  return row.offlinePrevious > 0 ? row.onlinePrevious / row.offlinePrevious : null;
+}
+
+function ChannelSummaryMetric({ label, value, previous, format = formatNumber, mode = "ratio" }: { label: string; value: number | null; previous: number | null; format?: (value: number) => string; mode?: "ratio" | "pp" }) {
+  const delta = mode === "pp" && value !== null && previous !== null ? value - previous : ratio(value || 0, previous || 0);
+  return <div><span>{label}</span><b>{value === null ? "—" : format(value)}</b><small className={trendClass(delta)}>{deltaText(value, previous, mode)}</small></div>;
+}
+
+function ChannelSummary({ rows }: { rows: ChannelSkuRow[] }) {
+  return <section className="channel-summary-grid">{BRANDS.map((item) => {
+    const summary = channelRollup(rows, item.key);
+    const gap = summary.online - summary.offline;
+    const previousGap = summary.onlinePrevious - summary.offlinePrevious;
+    const ratioValue = channelRatio(summary);
+    const previousRatioValue = previousChannelRatio(summary);
+    return <article className="channel-summary-card" style={{ "--brand-color": BRAND_COLORS[item.key] } as React.CSSProperties} key={item.key}>
+      <div className="channel-summary-head"><b>{item.key}</b><span>{item.name}</span></div>
+      <div className="channel-summary-metrics">
+        <ChannelSummaryMetric label="线上销量" value={summary.online} previous={summary.onlinePrevious} />
+        <ChannelSummaryMetric label="线下销量" value={summary.offline} previous={summary.offlinePrevious} />
+        <ChannelSummaryMetric label="本月差距" value={gap} previous={previousGap} format={(value) => `${value >= 0 ? "+" : "−"}${formatNumber(Math.abs(value))}`} />
+        <ChannelSummaryMetric label="线上vs线下" value={ratioValue} previous={previousRatioValue} format={rate} />
+      </div>
+    </article>;
+  })}</section>;
+}
+
+function ChannelCategoryTable({ rows, brand }: { rows: ChannelSkuRow[]; brand: "ALL" | BrandKey }) {
+  const [sort, setSort] = useState<SortState>({ key: "total", direction: "desc" });
+  const categoryRows = useMemo(() => {
+    const groups = new Map<string, ChannelRollupRow>();
+    rows.filter((row) => brand === "ALL" || row.brand === brand).forEach((row) => {
+      const key = `${row.brand}-${row.category}`;
+      const existing = groups.get(key) || { key, brand: row.brand, category: row.category, online: 0, onlinePrevious: 0, offline: 0, offlinePrevious: 0 };
+      existing.online += row.online;
+      existing.onlinePrevious += row.onlinePrevious;
+      existing.offline += row.offline;
+      existing.offlinePrevious += row.offlinePrevious;
+      groups.set(key, existing);
+    });
+    return [...groups.values()];
+  }, [rows, brand]);
+  const columns: SortColumn<ChannelRollupRow>[] = [
+    { key: "brand", label: "品牌", value: (row) => row.brand, defaultDirection: "asc" },
+    { key: "category", label: "品类", value: (row) => row.category, defaultDirection: "asc" },
+    { key: "online", label: "线上销量", value: (row) => row.online },
+    { key: "offline", label: "线下销量", value: (row) => row.offline },
+    { key: "gap", label: "线上－线下", value: (row) => row.online - row.offline },
+    { key: "onlineOfflineRatio", label: "线上vs线下", value: (row) => channelRatio(row) },
+    { key: "total", label: "总销量", value: (row) => row.online + row.offline },
+  ];
+  const sortColumn = columns.find((column) => column.key === sort.key) || columns[columns.length - 1];
+  const sorted = [...categoryRows].sort((a, b) => {
+    const result = compareSortValue(sortColumn.value(a), sortColumn.value(b));
+    return sort.direction === "asc" ? result : -result;
+  });
+  const sortBy = (column: SortColumn<ChannelRollupRow>) => setSort((current) => current.key === column.key ? { key: column.key, direction: current.direction === "asc" ? "desc" : "asc" } : { key: column.key, direction: column.defaultDirection || "desc" });
+  return <div className="table-wrap channel-category-table"><table><thead><tr>{columns.filter((column) => column.key !== "total").map((column) => <SortableHeader key={column.key} label={column.label} active={sort.key === column.key} direction={sort.direction} onClick={() => sortBy(column)} />)}</tr></thead><tbody>{sorted.map((row) => {
+    const gap = row.online - row.offline;
+    const previousGap = row.onlinePrevious - row.offlinePrevious;
+    const ratioValue = channelRatio(row);
+    const previousRatioValue = previousChannelRatio(row);
+    return <tr key={row.key}><td><b style={{ color: BRAND_COLORS[row.brand] }}>{row.brand}</b></td><td><b>{row.category}</b></td><MetricCell value={row.online} previous={row.onlinePrevious} format={formatNumber} /><MetricCell value={row.offline} previous={row.offlinePrevious} format={formatNumber} /><MetricCell value={gap} previous={previousGap} format={(value) => `${value >= 0 ? "+" : "−"}${formatNumber(Math.abs(value))}`} /><MetricCell value={ratioValue} previous={previousRatioValue} format={rate} /></tr>;
+  })}</tbody></table></div>;
+}
+
 function ChannelTable({ rows, brand }: { rows: ChannelSkuRow[]; brand: "ALL" | BrandKey }) {
   const [sort, setSort] = useState<SortState>({ key: "total", direction: "desc" });
   const columns: SortColumn<ChannelSkuRow>[] = [
     { key: "brand", label: "品牌", value: (row) => row.brand, defaultDirection: "asc" },
+    { key: "category", label: "品类", value: (row) => row.category, defaultDirection: "asc" },
     { key: "sku", label: "SKU", value: (row) => row.id, defaultDirection: "asc" },
     { key: "product", label: "产品名", value: (row) => row.product, defaultDirection: "asc" },
     { key: "online", label: "线上销量", value: (row) => row.online },
@@ -1030,14 +1134,14 @@ function ChannelTable({ rows, brand }: { rows: ChannelSkuRow[]; brand: "ALL" | B
   const sorted = rows.filter((row) => brand === "ALL" || row.brand === brand).sort((a, b) => {
     const result = compareSortValue(sortColumn.value(a), sortColumn.value(b));
     return sort.direction === "asc" ? result : -result;
-  }).slice(0, 120);
+  });
   const sortBy = (column: SortColumn<ChannelSkuRow>) => setSort((current) => current.key === column.key ? { key: column.key, direction: current.direction === "asc" ? "desc" : "asc" } : { key: column.key, direction: column.defaultDirection || "desc" });
-  return <div className="table-wrap channel-table"><table><colgroup><col className="channel-col-brand" /><col className="channel-col-sku" /><col className="channel-col-product" /><col className="channel-col-metric" /><col className="channel-col-metric" /><col className="channel-col-gap" /><col className="channel-col-share" /></colgroup><thead><tr>{columns.filter((column) => column.key !== "total").map((column) => <SortableHeader key={column.key} label={column.label} active={sort.key === column.key} direction={sort.direction} onClick={() => sortBy(column)} />)}</tr></thead><tbody>{sorted.map((row) => {
+  return <div className="table-wrap channel-table"><table><colgroup><col className="channel-col-brand" /><col className="channel-col-category" /><col className="channel-col-sku" /><col className="channel-col-product" /><col className="channel-col-metric" /><col className="channel-col-metric" /><col className="channel-col-gap" /><col className="channel-col-share" /></colgroup><thead><tr>{columns.filter((column) => column.key !== "total").map((column) => <SortableHeader key={column.key} label={column.label} active={sort.key === column.key} direction={sort.direction} onClick={() => sortBy(column)} />)}</tr></thead><tbody>{sorted.map((row) => {
     const gap = row.online - row.offline;
     const previousGap = row.onlinePrevious - row.offlinePrevious;
     const onlineOfflineRatio = row.offline > 0 ? row.online / row.offline : null;
     const previousOnlineOfflineRatio = row.offlinePrevious > 0 ? row.onlinePrevious / row.offlinePrevious : null;
-    return <tr key={row.key}><td><b style={{ color: BRAND_COLORS[row.brand] }}>{row.brand}</b></td><td><b>{row.id}</b></td><td className="channel-product"><b title={row.product || row.id}>{row.product || row.id}</b></td><MetricCell value={row.online} previous={row.onlinePrevious} format={formatNumber} /><MetricCell value={row.offline} previous={row.offlinePrevious} format={formatNumber} /><MetricCell value={gap} previous={previousGap} format={(value) => `${value >= 0 ? "+" : "−"}${formatNumber(Math.abs(value))}`} /><MetricCell value={onlineOfflineRatio} previous={previousOnlineOfflineRatio} format={rate} /></tr>;
+    return <tr key={row.key}><td><b style={{ color: BRAND_COLORS[row.brand] }}>{row.brand}</b></td><td><b>{row.category}</b></td><td><b>{row.id}</b></td><td className="channel-product"><b title={row.product || row.id}>{row.product || row.id}</b></td><MetricCell value={row.online} previous={row.onlinePrevious} format={formatNumber} /><MetricCell value={row.offline} previous={row.offlinePrevious} format={formatNumber} /><MetricCell value={gap} previous={previousGap} format={(value) => `${value >= 0 ? "+" : "−"}${formatNumber(Math.abs(value))}`} /><MetricCell value={onlineOfflineRatio} previous={previousOnlineOfflineRatio} format={rate} /></tr>;
   })}</tbody></table></div>;
 }
 
@@ -1135,7 +1239,7 @@ export function SalesDashboard() {
     <section className="filter-bar"><div><label>品牌</label><select value={brand} onChange={(event) => setBrand(event.target.value as "ALL" | BrandKey)}><option value="ALL">全部品牌</option>{BRANDS.map((item) => <option value={item.key} key={item.key}>{item.key} · {item.name}</option>)}</select></div><div><label>主日期从</label><input type="date" value={currentRange.start} onChange={(event) => setCurrentRange((value) => ({ ...value, start: event.target.value }))} /></div><div><label>主日期到</label><input type="date" value={currentRange.end} onChange={(event) => setCurrentRange((value) => ({ ...value, end: event.target.value }))} /></div><div><label>环比日期从</label><input type="date" value={previousRange.start} onChange={(event) => setPreviousRange((value) => ({ ...value, start: event.target.value }))} /></div><div><label>环比日期到</label><input type="date" value={previousRange.end} onChange={(event) => setPreviousRange((value) => ({ ...value, end: event.target.value }))} /></div><div><label>商品ID / ID</label><input value={productId} onChange={(event) => setProductId(event.target.value)} placeholder="输入商品ID / ID" /></div><div><label>产品名</label><input value={product} onChange={(event) => setProduct(event.target.value)} placeholder="搜索产品名" /></div><div><label>品类</label><select value={category} onChange={(event) => setCategory(event.target.value)}><option value="">全部品类</option>{options.categories.map((item) => <option key={item}>{item}</option>)}</select></div><button className="reset-button" onClick={resetFilters}>重置筛选</button></section>
     <nav className="page-tabs">{PAGE_LABELS.map((item) => <button key={item.key} className={page === item.key ? "active" : ""} onClick={() => setPage(item.key)}><b>{item.number}</b><span>{item.label}</span><small>{item.note}</small></button>)}<span className="sync-state"><i className={error ? "error-dot" : ""} />{loading ? "同步中" : "数据已同步"}</span></nav>
     {error && <div className="data-alert"><b>数据同步失败</b><span>{error}</span><button onClick={() => setRefresh((value) => value + 1)}>重新同步</button></div>}
-    {page === "channels" ? <section className="data-page channel-page"><div className="section-title"><span>07</span><div><h2>线上 / 线下 SKU 销量对比</h2><p>线上数据来自台湾线上 SKU 销量表；线下汇总三品牌各通路原始 SKU 销量。</p></div><em>{channelLoading ? "同步中" : `${channelData.rows.length} 个商品ID`}</em></div>{channelError && <div className="data-alert"><b>销量数据同步失败</b><span>{channelError}</span></div>}{channelLoading && channelData.rows.length === 0 ? <div className="loading-state"><span className="loading-mark" /><div><strong>正在同步线上与线下 SKU 销量</strong><p>按主日期范围和环比日期范围汇总商品ID</p></div></div> : <ChannelTable rows={channelData.rows} brand={brand} />}</section> : loading && data.length === 0 ? <div className="loading-state"><span className="loading-mark" /><div><strong>正在同步销售与广告数据</strong><p>读取三品牌的店铺、链接、商品ID和广告明细</p></div></div> : <>
+    {page === "channels" ? <><ChannelSummary rows={channelData.rows} /><section className="data-page channel-page"><div className="section-title"><span>07</span><div><h2>线上 / 线下 SKU 销量对比</h2><p>线上数据来自台湾线上 SKU 销量表；线下汇总三品牌各通路原始 SKU 销量；本页独立按 SKU 产品名归类，不影响链接明细和品类进度。</p></div><em>{channelLoading ? "同步中" : `${channelData.rows.length} 个商品ID`}</em></div>{channelError && <div className="data-alert"><b>销量数据同步失败</b><span>{channelError}</span></div>}{channelLoading && channelData.rows.length === 0 ? <div className="loading-state"><span className="loading-mark" /><div><strong>正在同步线上与线下 SKU 销量</strong><p>按主日期范围和环比日期范围汇总商品ID</p></div></div> : <><div className="channel-subsection"><div><h3>品类销量对比</h3><p>先看各品牌品类层级的线上、线下差距与倍数。</p></div></div><ChannelCategoryTable rows={channelData.rows} brand={brand} /><div className="channel-subsection sku-subsection"><div><h3>SKU 销量明细</h3><p>再下钻到具体 SKU；排序只作用于本表。</p></div></div><ChannelTable rows={channelData.rows} brand={brand} /></>}</section></> : loading && data.length === 0 ? <div className="loading-state"><span className="loading-mark" /><div><strong>正在同步销售与广告数据</strong><p>读取三品牌的店铺、链接、商品ID和广告明细</p></div></div> : <>
       {page === "overview" && <>
         <section className="metric-grid"><MetricCard label="累计 GMV" value={formatMoney(total.gmv, true)} delta={ratio(total.gmv, total.previous)} note={`DMS折后实收 · 环比区间 ${formatMoney(total.previous, true)}`} color="#2364d8" /><MetricCard label="目标 GMV 达成" value={levelPercent(total.goal > 0 ? total.gmv / total.goal : null)} delta={total.goal > 0 ? (total.gmv - total.previous) / total.goal : null} deltaMode="pp" note={`目标 ${formatMoney(total.goal, true)}`} color="#ff766b" /><MetricCard label="综合费比" value={levelPercent(total.gmv > 0 ? total.adSpend / total.gmv : null)} delta={(total.gmv > 0 && total.previous > 0) ? total.adSpend / total.gmv - total.previousAdSpend / total.previous : null} deltaMode="pp" note="站内花费 / DMS GMV" color="#1ba89c" /><MetricCard label="综合 ROI" value={rate(totalRoi)} delta={ratio(totalRoi, previousTotalRoi || 0)} note={`DMS GMV / 站内花费`} color="#8d7bd8" /></section>
         <section className="metric-grid secondary"><MetricCard label="订单量" value={formatNumber(total.orders)} delta={ratio(total.orders, total.previousOrders)} note={`客单价 ${formatMoney(total.orders > 0 ? total.gmv / total.orders : 0)}`} color="#2364d8" /><MetricCard label="虾皮补贴券" value={formatMoney(total.voucher, true)} delta={ratio(total.voucher, total.previousVoucher)} note={`Voucher from shopee · 占GMV ${levelPercent(total.gmv > 0 ? total.voucher / total.gmv : null)}`} color="#ff766b" /><MetricCard label="加购量" value={formatNumber(total.cart)} delta={ratio(total.cart, total.previousCart)} note={`加购率 ${levelPercent(total.visitors > 0 ? total.cart / total.visitors : null)}`} color="#1ba89c" /><MetricCard label="广告GMV占比" value={levelPercent(total.gmv > 0 ? total.adGmv / total.gmv : null)} delta={(total.gmv > 0 && total.previous > 0) ? total.adGmv / total.gmv - total.previousAdGmv / total.previous : null} deltaMode="pp" note={`自然GMV ${formatMoney(Math.max(0, total.gmv - total.adGmv), true)}`} color="#8d7bd8" /></section>
