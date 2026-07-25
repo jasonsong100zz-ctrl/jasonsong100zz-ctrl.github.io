@@ -303,6 +303,31 @@ function isoDate(year: number, month: number, day: number) {
   return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
+function parseIsoDate(value: string) {
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(year, month - 1, day);
+}
+
+function addDays(value: string, days: number) {
+  const date = parseIsoDate(value);
+  date.setDate(date.getDate() + days);
+  return isoDate(date.getFullYear(), date.getMonth() + 1, date.getDate());
+}
+
+function dateRangeLength(range: DateRange) {
+  const start = parseIsoDate(range.start).getTime();
+  const end = parseIsoDate(range.end).getTime();
+  return Math.max(0, Math.floor((end - start) / 86_400_000) + 1);
+}
+
+function normalizeDateKey(value: string) {
+  const gviz = value.match(/^Date\((\d+),(\d+),(\d+)/);
+  if (gviz) return isoDate(Number(gviz[1]), Number(gviz[2]) + 1, Number(gviz[3]));
+  const iso = value.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  if (iso) return isoDate(Number(iso[1]), Number(iso[2]), Number(iso[3]));
+  return value;
+}
+
 function defaultCurrentRange(): DateRange {
   const now = new Date();
   return { start: isoDate(now.getFullYear(), now.getMonth() + 1, 1), end: isoDate(now.getFullYear(), now.getMonth() + 1, now.getDate()) };
@@ -664,19 +689,24 @@ function MetricCell({ value, previous, format, mode = "ratio" }: { value: number
   return <td className="metric-value"><b>{value === null || value === undefined || !Number.isFinite(value) ? "—" : format(value)}</b><small className={trendClass(delta)}>{deltaText(value, previous, mode)}</small></td>;
 }
 
-function DailyBrandRow({ item, comparisonLabel }: { item: BrandData; comparisonLabel: string }) {
-  const currentRows = item.daily.slice(-20);
-  const previousRows = item.previousDaily.slice(-20);
-  const max = Math.max(...currentRows.map((row) => row.gmv), ...previousRows.map((row) => row.gmv), 1);
+function DailyBrandRow({ item, comparisonLabel, currentRange, previousRange }: { item: BrandData; comparisonLabel: string; currentRange: DateRange; previousRange: DateRange }) {
+  const currentMap = new Map(item.daily.map((row) => [normalizeDateKey(row.date), row]));
+  const previousMap = new Map(item.previousDaily.map((row) => [normalizeDateKey(row.date), row]));
+  const length = Math.max(dateRangeLength(currentRange), dateRangeLength(previousRange));
+  const days = Array.from({ length }, (_, index) => {
+    const currentDate = addDays(currentRange.start, index);
+    const previousDate = addDays(previousRange.start, index);
+    return { currentDate, previousDate, current: currentMap.get(currentDate), previous: previousMap.get(previousDate) };
+  });
+  const max = Math.max(...days.map((day) => day.current?.gmv || 0), ...days.map((day) => day.previous?.gmv || 0), 1);
   const mom = ratio(item.current.gmv, item.previous.gmv);
   const currentFee = item.current.gmv > 0 ? item.current.adSpend / item.current.gmv : null;
   const previousFee = item.previous.gmv > 0 ? item.previous.adSpend / item.previous.gmv : null;
   const feeDelta = currentFee !== null && previousFee !== null ? currentFee - previousFee : null;
   const color = BRAND_COLORS[item.config.key];
-  const days = Array.from({ length: Math.max(currentRows.length, previousRows.length) }, (_, index) => ({ current: currentRows[index], previous: previousRows[index] }));
   return <article className="brand-daily-row" style={{ "--brand-color": color } as React.CSSProperties}>
     <div className="brand-row-head"><div className="brand-row-name"><i /> <b>{item.config.key}</b><span>{item.config.name}</span></div><div className="brand-row-metrics"><span>本期 GMV <strong>{formatChartAmount(item.current.gmv)}</strong></span><span className={trendClass(mom)}>环比 {percent(mom)}</span><span>站内费比 <strong>{levelPercent(currentFee)}</strong></span><span className={trendClass(feeDelta)}>费比变化 {feeDelta === null ? "—" : `${feeDelta > 0 ? "+" : "−"}${Math.abs(feeDelta * 100).toFixed(1)}pp`}</span><small>{comparisonLabel}</small></div></div>
-    <div className="brand-row-grid"><div className="daily-chart-card"><div className="chart-card-title"><b>每日 GMV</b><span>深色：本期 · 浅色：环比区间</span></div><div className="daily-compare-bars">{days.map((day, index) => <div className="day-group" key={`${item.config.key}-${day.current?.date || day.previous?.date || index}`}><div className="bar-slot"><b>{day.current ? formatChartAmount(day.current.gmv) : ""}</b><span className="bar-current" style={{ height: `${Math.max(3, (day.current?.gmv || 0) / max * 100)}%` }} /></div><div className="bar-slot"><b className="bar-label-muted">{day.previous ? formatChartAmount(day.previous.gmv) : ""}</b><span className="bar-previous" style={{ height: `${Math.max(3, (day.previous?.gmv || 0) / max * 100)}%` }} /></div><small>{dateLabel(day.current?.date || day.previous?.date || "")}</small></div>)}</div><div className="chart-foot"><strong>{formatChartAmount(item.current.gmv)}</strong><span>共 {currentRows.length} 天 · 环比区间 {formatChartAmount(item.previous.gmv)}</span></div></div><div className="fee-chart-card"><div className="chart-card-title"><b>站内费比</b><span>站内花费 ÷ GMV</span></div><div className="fee-bars"><div className="fee-line"><span>本期</span><div className="fee-track"><i style={{ width: `${Math.min(100, Math.max(0, (currentFee || 0) * 100 * 3))}%` }} /><b>{levelPercent(currentFee)}</b></div></div><div className="fee-line"><span>环比</span><div className="fee-track previous"><i style={{ width: `${Math.min(100, Math.max(0, (previousFee || 0) * 100 * 3))}%` }} /><b>{levelPercent(previousFee)}</b></div></div></div><div className={`fee-delta ${trendClass(feeDelta)}`}>{feeDelta === null ? "暂无可比费比" : `费比${feeDelta > 0 ? "上升" : "下降"} ${Math.abs(feeDelta * 100).toFixed(1)} 个百分点`}</div></div></div>
+    <div className="brand-row-grid"><div className="daily-chart-card"><div className="chart-card-title"><b>每日 GMV</b><span>深色：本期 · 浅色：环比区间 · 上方为日环比</span></div><div className="daily-compare-bars">{days.map((day) => { const dailyMom = ratio(day.current?.gmv || 0, day.previous?.gmv || 0); return <div className="day-group" key={`${item.config.key}-${day.currentDate}-${day.previousDate}`}><em className={`daily-mom ${trendClass(dailyMom)}`}>{dailyMom === null ? "—" : percent(dailyMom)}</em><div className="bar-slot"><b>{day.current ? formatChartAmount(day.current.gmv) : ""}</b><span className="bar-current" style={{ height: `${Math.max(3, (day.current?.gmv || 0) / max * 100)}%` }} /></div><div className="bar-slot"><b className="bar-label-muted">{day.previous ? formatChartAmount(day.previous.gmv) : ""}</b><span className="bar-previous" style={{ height: `${Math.max(3, (day.previous?.gmv || 0) / max * 100)}%` }} /></div><small title={`${day.currentDate} 对比 ${day.previousDate}`}>{dateLabel(day.currentDate)}</small></div>; })}</div><div className="chart-foot"><strong>{formatChartAmount(item.current.gmv)}</strong><span>共 {days.length} 天 · 环比区间 {formatChartAmount(item.previous.gmv)}</span></div></div><div className="fee-chart-card"><div className="chart-card-title"><b>站内费比</b><span>站内花费 ÷ GMV</span></div><div className="fee-bars"><div className="fee-line"><span>本期</span><div className="fee-track"><i style={{ width: `${Math.min(100, Math.max(0, (currentFee || 0) * 100 * 3))}%` }} /><b>{levelPercent(currentFee)}</b></div></div><div className="fee-line"><span>环比</span><div className="fee-track previous"><i style={{ width: `${Math.min(100, Math.max(0, (previousFee || 0) * 100 * 3))}%` }} /><b>{levelPercent(previousFee)}</b></div></div></div><div className={`fee-delta ${trendClass(feeDelta)}`}>{feeDelta === null ? "暂无可比费比" : `费比${feeDelta > 0 ? "上升" : "下降"} ${Math.abs(feeDelta * 100).toFixed(1)} 个百分点`}</div></div></div>
   </article>;
 }
 
@@ -879,7 +909,7 @@ export function SalesDashboard() {
         <section className="metric-grid secondary"><MetricCard label="订单量" value={formatNumber(total.orders)} note={`客单价 ${formatMoney(total.orders > 0 ? total.gmv / total.orders : 0)}`} color="#2364d8" /><MetricCard label="曝光量" value={formatNumber(total.exposure)} note={`访客 ${formatNumber(total.visitors)}`} color="#ff766b" /><MetricCard label="加购量" value={formatNumber(total.cart)} note={`加购率 ${percent(total.visitors > 0 ? total.cart / total.visitors : 0)}`} color="#1ba89c" /><MetricCard label="广告GMV占比" value={percent(total.gmv > 0 ? total.adGmv / total.gmv : 0)} note={`自然GMV ${formatMoney(Math.max(0, total.gmv - total.adGmv), true)}`} color="#8d7bd8" /></section>
         <section className="brand-panels">{visible.map((item) => { const mom = ratio(item.current.gmv, item.previous.gmv); const share = total.gmv > 0 ? item.current.gmv / total.gmv : 0; const roi = item.current.adSpend > 0 ? item.actualGmv / item.current.adSpend : 0; const brandColor = BRAND_COLORS[item.config.key]; return <article className="brand-panel" style={{ "--brand-color": brandColor } as React.CSSProperties} key={item.config.key}><div className="panel-title"><b>{item.config.key}</b><span>{item.config.name}</span></div><div className="brand-main"><strong>{formatMoney(item.current.gmv, true)} GMV</strong><div><small>环比区间</small><b>{percent(mom)}</b></div></div><div className="brand-stats"><div><span>目标达成</span><b>{item.config.goal > 0 ? `${(item.current.gmv / item.config.goal * 100).toFixed(1)}%` : "—"}</b></div><div><span>品牌占比</span><b>{percent(share)}</b></div><div><span>综合ROI</span><b>{rate(roi)}</b></div></div><div className="brand-stats lower"><div><span>站内花费</span><b>{formatMoney(item.current.adSpend, true)}</b></div><div><span>广告GMV</span><b>{formatMoney(item.current.adGmv, true)}</b></div><div><span>自然GMV</span><b>{formatMoney(Math.max(0, item.current.gmv - item.current.adGmv), true)}</b></div><div><span>订单量</span><b>{formatNumber(item.current.orders)}</b></div></div><p>点击下方页面进入 {item.config.key} 的品类、链接和广告明细。</p></article>; })}</section>
         <Insight brands={visible} />
-        <section className="comparison-panel"><div className="section-title"><span>01</span><div><h2>品牌每日销售与环比</h2><p>每个品牌一行：左侧比较本期 / 环比区间 GMV，右侧展示站内费比及变化。</p></div><em>{rangeLabel(currentRange)} · {rangeLabel(previousRange)}</em></div><div className="brand-daily-rows">{visible.map((item) => <DailyBrandRow key={item.config.key} item={item} comparisonLabel={comparisonLabel} />)}</div></section>
+        <section className="comparison-panel"><div className="section-title"><span>01</span><div><h2>品牌每日销售与环比</h2><p>每个品牌一行：左侧比较本期 / 环比区间 GMV，右侧展示站内费比及变化。</p></div><em>{rangeLabel(currentRange)} · {rangeLabel(previousRange)}</em></div><div className="brand-daily-rows">{visible.map((item) => <DailyBrandRow key={item.config.key} item={item} comparisonLabel={comparisonLabel} currentRange={currentRange} previousRange={previousRange} />)}</div></section>
         {brand !== "ALL" && <>
           <section className="data-page"><div className="section-title"><span>02</span><div><h2>{brand} · 品类进度</h2><p>通过匹配表的商品ID补齐产品与类目。</p></div><em>{rowsFor("category").length} 条明细</em></div><Table rows={rowsFor("category")} type="category" /></section>
           <section className="data-page"><div className="section-title"><span>04</span><div><h2>{brand} · 链接明细</h2><p>以商品ID / ID为关联主键。</p></div><em>{rowsFor("link").length} 条明细</em></div><Table rows={rowsFor("link")} type="link" /></section>
