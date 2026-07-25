@@ -679,8 +679,16 @@ async function loadBrand(config: BrandConfig, period: DateRange, previousPeriod:
       const product = match?.product || row.sourceProduct || id;
       const dimensions = { link: product, id, product, category: normalizeCategory(match?.category || FALLBACK_CATEGORY) };
       const ad = adMap.get(id) || [];
+      const prevAd = previousAdMap.get(id) || [];
       const prev = previousMap.get(id) || [];
-      return metricFromValues(config.key, `link-${id}-${index}`, [...row.values, ad[0] || 0, ad[1] || 0, ad[2] || 0, ad[3] || 0, ad[4] || 0], dimensions, prev, exchangeRate);
+      return metricFromValues(
+        config.key,
+        `link-${id}-${index}`,
+        [...row.values, ad[0] || 0, ad[1] || 0, ad[2] || 0, ad[3] || 0, ad[4] || 0],
+        dimensions,
+        [...prev, prevAd[0] || 0, prevAd[1] || 0, prevAd[2] || 0, prevAd[3] || 0, prevAd[4] || 0],
+        exchangeRate,
+      );
     }).filter((row) => row.link || row.id);
   };
   const links = decorateRows(currentLinks, prevLinks);
@@ -923,6 +931,7 @@ function Table({ rows, type }: { rows: MetricRow[]; type: "category" | "link" | 
       { key: "primary", label: type === "category" ? "品类" : "产品名", value: (row) => type === "category" ? row.category : row.product || row.link, defaultDirection: "asc" },
       ...(type === "link" ? [{ key: "id", label: "商品ID / ID", value: (row: MetricRow) => row.id, defaultDirection: "asc" as const }] : []),
       { key: "gmv", label: "GMV", value: (row) => row.gmv },
+      { key: "adSpend", label: "站内花费", value: (row) => row.adSpend },
       { key: "orders", label: "订单", value: (row) => row.orders },
       { key: "aov", label: "客单价", value: (row) => row.orders > 0 ? row.gmv / row.orders : null },
       { key: "visitors", label: "访客", value: (row) => row.visitors },
@@ -967,7 +976,7 @@ function Table({ rows, type }: { rows: MetricRow[]; type: "category" | "link" | 
       <td className="primary-cell"><b title={type === "category" ? row.category : row.product || row.link || "—"}>{type === "category" ? row.category : row.product || row.link || "—"}</b><small style={{ color: BRAND_COLORS[row.brand] }}>{row.brand}{type === "link" ? ` · ${row.category || FALLBACK_CATEGORY}` : ""}</small></td>
       {type === "link" && <td>{row.id || "—"}</td>}
       {type === "ads" && <td>{row.category || "—"}</td>}
-      {type === "ads" ? <><MetricCell value={row.gmv > 0 ? row.gmv : null} previous={row.previousGmv > 0 ? row.previousGmv : null} format={(value) => formatMoney(value, true)} /><MetricCell value={row.adGmv} previous={row.previousAdGmv} format={(value) => formatMoney(value, true)} /><MetricCell value={adDealShare} previous={previousAdDealShare} format={levelPercent} mode="pp" /></> : <><MetricCell value={row.gmv} previous={row.previousGmv} format={(value) => formatMoney(value, true)} /><MetricCell value={row.orders} previous={row.previousOrders} format={formatNumber} /><MetricCell value={aov} previous={previousAov} format={formatMoney} /><MetricCell value={row.visitors} previous={row.previousVisitors} format={formatNumber} /><MetricCell value={ctr} previous={previousCtr} format={levelPercent} mode="pp" /><MetricCell value={row.cart} previous={row.previousCart} format={formatNumber} /><MetricCell value={cartRate} previous={previousCartRate} format={levelPercent} mode="pp" /><MetricCell value={cvr} previous={previousCvr} format={levelPercent} mode="pp" /><MetricCell value={roi} previous={previousRoi} format={rate} /><MetricCell value={fee} previous={previousFee} format={levelPercent} mode="pp" /><MetricCell value={share} previous={previousShare} format={levelPercent} mode="pp" /><MetricCell value={1 - share} previous={1 - previousShare} format={levelPercent} mode="pp" /></>}
+      {type === "ads" ? <><MetricCell value={row.gmv > 0 ? row.gmv : null} previous={row.previousGmv > 0 ? row.previousGmv : null} format={(value) => formatMoney(value, true)} /><MetricCell value={row.adGmv} previous={row.previousAdGmv} format={(value) => formatMoney(value, true)} /><MetricCell value={adDealShare} previous={previousAdDealShare} format={levelPercent} mode="pp" /></> : <><MetricCell value={row.gmv} previous={row.previousGmv} format={(value) => formatMoney(value, true)} /><MetricCell value={row.adSpend} previous={row.previousAdSpend} format={(value) => formatMoney(value, true)} /><MetricCell value={row.orders} previous={row.previousOrders} format={formatNumber} /><MetricCell value={aov} previous={previousAov} format={formatMoney} /><MetricCell value={row.visitors} previous={row.previousVisitors} format={formatNumber} /><MetricCell value={ctr} previous={previousCtr} format={levelPercent} mode="pp" /><MetricCell value={row.cart} previous={row.previousCart} format={formatNumber} /><MetricCell value={cartRate} previous={previousCartRate} format={levelPercent} mode="pp" /><MetricCell value={cvr} previous={previousCvr} format={levelPercent} mode="pp" /><MetricCell value={roi} previous={previousRoi} format={rate} /><MetricCell value={fee} previous={previousFee} format={levelPercent} mode="pp" /><MetricCell value={share} previous={previousShare} format={levelPercent} mode="pp" /><MetricCell value={1 - share} previous={1 - previousShare} format={levelPercent} mode="pp" /></>}
       {type === "ads" && <><MetricCell value={row.adSpend} previous={row.previousAdSpend} format={(value) => formatMoney(value, true)} /><MetricCell value={roi} previous={previousRoi} format={rate} /><MetricCell value={row.exposure} previous={row.previousExposure} format={formatNumber} /><MetricCell value={row.clicks} previous={row.previousClicks} format={formatNumber} /><MetricCell value={ctr} previous={previousCtr} format={levelPercent} mode="pp" /><MetricCell value={cpc} previous={previousCpc} format={formatMoneyOneDecimal} /><MetricCell value={row.clicks > 0 ? row.conversions / row.clicks : 0} previous={row.previousClicks > 0 ? row.previousConversions / row.previousClicks : 0} format={levelPercent} mode="pp" /></>}
     </tr>;
   })}</tbody></table></div>;
