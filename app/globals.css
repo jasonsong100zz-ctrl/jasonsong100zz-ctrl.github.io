@@ -180,6 +180,20 @@ td.up { color: var(--up); font-weight: 700; }
 td.down { color: var(--down); font-weight: 700; }
 td.metric-value b { color: var(--ink); font-size: 11px; font-weight: 800; }
 td.metric-value small { font-size: 9px; }
+.channel-table table { min-width: 860px; table-layout: fixed; }
+.channel-table .channel-col-sku { width: 22%; }
+.channel-table .channel-col-product { width: 32%; }
+.channel-table .channel-col-metric { width: 11%; }
+.channel-table .channel-col-gap { width: 13%; }
+.channel-table .channel-col-share { width: 11%; }
+.channel-table th,
+.channel-table td { padding: 9px 8px; }
+.channel-table td:first-child { min-width: 0; }
+.channel-table td b { font-size: 10.5px; line-height: 1.25; }
+.channel-table td small { margin-top: 3px; font-size: 8.5px; }
+.channel-table td.metric-value b { font-size: 11px; }
+.channel-table td.metric-value small { font-size: 8.5px; }
+.channel-table .channel-product b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 tbody tr:hover td { background: #f8fbff; }
 .loading-state { min-height: 450px; display: flex; justify-content: center; align-items: center; gap: 15px; color: var(--muted); }
 .loading-state strong { color: var(--ink); }
