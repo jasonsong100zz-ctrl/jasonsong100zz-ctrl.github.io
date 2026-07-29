@@ -246,7 +246,8 @@ td.metric-value small { font-size: 9px; }
 .channel-table .channel-col-brand { width: 6%; }
 .channel-table .channel-col-category { width: 10%; }
 .channel-table .channel-col-sku { width: 12%; }
-.channel-table .channel-col-product { width: 27%; }
+.channel-table .channel-col-spu { width: 17%; }
+.channel-table .channel-col-product { width: 18%; }
 .channel-table .channel-col-metric { width: 9.5%; }
 .channel-table .channel-col-gap { width: 12%; }
 .channel-table .channel-col-share { width: 14.5%; }
@@ -259,6 +260,12 @@ td.metric-value small { font-size: 9px; }
 .channel-table td.metric-value b { font-size: 10px; }
 .channel-table td.metric-value small { font-size: 8px; line-height: 1.1; }
 .channel-table .channel-product b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spu-row td { background: #fff; }
+.sku-child-row td { background: #f8fbff; }
+.sku-child-row td:first-child { border-left: 3px solid #dbe8f8; }
+.spu-toggle { display: flex; align-items: center; gap: 6px; width: 100%; border: 0; padding: 0; background: transparent; color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+.spu-toggle i { display: grid; place-items: center; flex: 0 0 16px; width: 16px; height: 16px; border-radius: 50%; background: #eaf1fb; color: var(--blue); font-size: 11px; font-style: normal; font-weight: 900; }
+.spu-toggle b { min-width: 0; }
 tbody tr:hover td { background: #f8fbff; }
 .loading-state { min-height: 450px; display: flex; justify-content: center; align-items: center; gap: 15px; color: var(--muted); }
 .loading-state strong { color: var(--ink); }

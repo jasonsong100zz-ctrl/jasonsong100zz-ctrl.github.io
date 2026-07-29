@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { Fragment, FormEvent, useEffect, useMemo, useState } from "react";
 
 const SHEET_ID = "1yuJxg2PFQgAiOjnnCZVutQm-4I1q376c8eXZOjWQLN8";
 const DEFAULT_TWD_TO_CNY = 0.21;
@@ -95,6 +95,7 @@ type ChannelSkuRow = {
   brand: BrandKey;
   id: string;
   product: string;
+  spu: string;
   category: string;
   online: number;
   onlinePrevious: number;
@@ -106,6 +107,28 @@ type ChannelRollupRow = {
   key: string;
   brand: BrandKey;
   category: string;
+  online: number;
+  onlinePrevious: number;
+  offline: number;
+  offlinePrevious: number;
+};
+
+type ChannelProductMapRow = {
+  brand: BrandKey;
+  category: string;
+  sku: string;
+  spu: string;
+  product: string;
+};
+
+type ChannelSpuRow = {
+  key: string;
+  brand: BrandKey;
+  category: string;
+  spu: string;
+  product: string;
+  skuCount: number;
+  children: ChannelSkuRow[];
   online: number;
   onlinePrevious: number;
   offline: number;
@@ -790,12 +813,36 @@ function parseCsv(text: string) {
   });
 }
 
+async function loadChannelProductMap() {
+  const response = await fetch("/channel_spu_map.csv", { cache: "no-store" });
+  if (!response.ok) return new Map<string, ChannelProductMapRow>();
+  const [headers = [], ...rows] = parseCsvMatrix(await response.text());
+  const indexOf = (name: string) => headers.findIndex((header) => header.trim().toLowerCase() === name);
+  const brandIndex = indexOf("brand");
+  const categoryIndex = indexOf("category");
+  const skuIndex = indexOf("sku");
+  const spuIndex = indexOf("spu");
+  const productIndex = indexOf("product");
+  const map = new Map<string, ChannelProductMapRow>();
+  rows.forEach((row) => {
+    const brand = brandFromValue(row[brandIndex] || "");
+    const sku = normalizeId(row[skuIndex] || "");
+    if (!brand || !sku || sku === "未填写") return;
+    const product = (row[productIndex] || "").trim() || sku;
+    const spu = (row[spuIndex] || "").trim() || product;
+    const category = normalizeCategory((row[categoryIndex] || "").trim() || channelCategoryFromProduct(product, sku));
+    map.set(`${brand}:${sku.toUpperCase()}`, { brand, sku, category, spu, product });
+  });
+  return map;
+}
+
 async function loadChannelData(period: DateRange, previousPeriod: DateRange): Promise<ChannelData> {
-  const [onlineCurrentRows, onlinePreviousRows, onlineProductRows, offlineResponse] = await Promise.all([
+  const [onlineCurrentRows, onlinePreviousRows, onlineProductRows, offlineResponse, channelProductMap] = await Promise.all([
     querySheet("", skuQuery(period.start, period.end), ONLINE_SKU_SHEET_ID),
     querySheet("", skuQuery(previousPeriod.start, previousPeriod.end), ONLINE_SKU_SHEET_ID),
     querySheet("", skuProductQuery(), ONLINE_SKU_SHEET_ID),
     fetch("/offline_sku_sales.csv", { cache: "no-store" }),
+    loadChannelProductMap(),
   ]);
   if (!offlineResponse.ok) throw new Error(`线下销量文件读取失败（${offlineResponse.status}）`);
   const offlineRows = parseCsv(await offlineResponse.text());
@@ -804,6 +851,9 @@ async function loadChannelData(period: DateRange, previousPeriod: DateRange): Pr
   const productMap = new Map<BrandKey, Map<string, string>>();
   BRANDS.forEach((brand) => productMap.set(brand.key, new Map()));
   BRANDS.forEach((brand) => { onlineCurrent.set(brand.key, new Map()); onlinePrevious.set(brand.key, new Map()); });
+  channelProductMap.forEach((record) => {
+    productMap.get(record.brand)?.set(record.sku, record.product || record.spu || record.sku);
+  });
   onlineProductRows.forEach((row) => {
     const brand = brandFromValue(stringAt(row, 2));
     const id = normalizeId(stringAt(row, 0));
@@ -853,8 +903,11 @@ async function loadChannelData(period: DateRange, previousPeriod: DateRange): Pr
       const onlinePrev = onlinePrevious.get(config.key)!.get(id);
       const offline = currentOffline.get(id);
       const offlinePrev = previousOffline.get(id);
-      const product = online?.product || onlinePrev?.product || offline?.product || offlinePrev?.product || productMap.get(config.key)?.get(id) || id;
-      rows.push({ key: `${config.key}-${id}`, brand: config.key, id, product, category: channelCategoryFromProduct(product, id), online: online?.quantity || 0, onlinePrevious: onlinePrev?.quantity || 0, offline: offline?.quantity || 0, offlinePrevious: offlinePrev?.quantity || 0 });
+      const mapping = channelProductMap.get(`${config.key}:${id.toUpperCase()}`);
+      const product = mapping?.product || online?.product || onlinePrev?.product || offline?.product || offlinePrev?.product || productMap.get(config.key)?.get(id) || id;
+      const spu = mapping?.spu || product;
+      const category = mapping?.category || channelCategoryFromProduct(product, id);
+      rows.push({ key: `${config.key}-${id}`, brand: config.key, id, product, spu, category, online: online?.quantity || 0, onlinePrevious: onlinePrev?.quantity || 0, offline: offline?.quantity || 0, offlinePrevious: offlinePrev?.quantity || 0 });
     });
   }
   return { rows };
@@ -1175,13 +1228,29 @@ function ChannelCategoryTable({ rows, brand }: { rows: ChannelSkuRow[]; brand: "
   })}</tbody></table></div></>;
 }
 
-function ChannelTable({ rows, brand }: { rows: ChannelSkuRow[]; brand: "ALL" | BrandKey }) {
+function ChannelSpuTable({ rows, brand }: { rows: ChannelSkuRow[]; brand: "ALL" | BrandKey }) {
   const [sort, setSort] = useState<SortState>({ key: "total", direction: "desc" });
-  const columns: SortColumn<ChannelSkuRow>[] = [
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const spuRows = useMemo(() => {
+    const groups = new Map<string, ChannelSpuRow>();
+    rows.filter((row) => brand === "ALL" || row.brand === brand).forEach((row) => {
+      const key = `${row.brand}-${row.category}-${row.spu}`;
+      const existing = groups.get(key) || { key, brand: row.brand, category: row.category, spu: row.spu, product: row.spu, skuCount: 0, children: [], online: 0, onlinePrevious: 0, offline: 0, offlinePrevious: 0 };
+      existing.children.push(row);
+      existing.skuCount = existing.children.length;
+      existing.online += row.online;
+      existing.onlinePrevious += row.onlinePrevious;
+      existing.offline += row.offline;
+      existing.offlinePrevious += row.offlinePrevious;
+      groups.set(key, existing);
+    });
+    return [...groups.values()].map((row) => ({ ...row, children: [...row.children].sort((a, b) => (b.online + b.offline) - (a.online + a.offline)) }));
+  }, [rows, brand]);
+  const columns: SortColumn<ChannelSpuRow>[] = [
     { key: "brand", label: "品牌", value: (row) => row.brand, defaultDirection: "asc" },
     { key: "category", label: "品类", value: (row) => row.category, defaultDirection: "asc" },
-    { key: "sku", label: "SKU", value: (row) => row.id, defaultDirection: "asc" },
-    { key: "product", label: "产品名", value: (row) => row.product, defaultDirection: "asc" },
+    { key: "spu", label: "SPU / SKU码", value: (row) => row.spu, defaultDirection: "asc" },
+    { key: "skuCount", label: "SKU名", value: (row) => row.skuCount },
     { key: "online", label: "线上销量", value: (row) => row.online },
     { key: "offline", label: "线下销量", value: (row) => row.offline },
     { key: "gap", label: "线上－线下", value: (row) => row.online - row.offline },
@@ -1189,26 +1258,47 @@ function ChannelTable({ rows, brand }: { rows: ChannelSkuRow[]; brand: "ALL" | B
     { key: "total", label: "总销量", value: (row) => row.online + row.offline },
   ];
   const sortColumn = columns.find((column) => column.key === sort.key) || columns[columns.length - 1];
-  const sorted = rows.filter((row) => brand === "ALL" || row.brand === brand).sort((a, b) => {
+  const sorted = [...spuRows].sort((a, b) => {
     const result = compareSortValue(sortColumn.value(a), sortColumn.value(b));
     return sort.direction === "asc" ? result : -result;
   });
-  const sortBy = (column: SortColumn<ChannelSkuRow>) => setSort((current) => current.key === column.key ? { key: column.key, direction: current.direction === "asc" ? "desc" : "asc" } : { key: column.key, direction: column.defaultDirection || "desc" });
-  const exportSkuRows = () => {
-    exportExcel("台湾线上销售分析-线上线下SKU销量明细", "SKU销量明细", ["品牌", "品类", "SKU", "产品名", "线上销量", "线上销量环比", "线下销量", "线下销量环比", "线上－线下", "差距环比", "线上vs线下", "倍数环比"], sorted.map((row) => {
+  const sortBy = (column: SortColumn<ChannelSpuRow>) => setSort((current) => current.key === column.key ? { key: column.key, direction: current.direction === "asc" ? "desc" : "asc" } : { key: column.key, direction: column.defaultDirection || "desc" });
+  const toggle = (key: string) => setExpanded((current) => {
+    const next = new Set(current);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    return next;
+  });
+  const exportSpuRows = () => {
+    const exportRows = sorted.flatMap((row) => {
       const gap = row.online - row.offline;
       const previousGap = row.onlinePrevious - row.offlinePrevious;
       const ratioValue = row.offline > 0 ? row.online / row.offline : null;
       const previousRatioValue = row.offlinePrevious > 0 ? row.onlinePrevious / row.offlinePrevious : null;
-      return [row.brand, row.category, row.id, row.product, formatNumber(row.online), deltaText(row.online, row.onlinePrevious), formatNumber(row.offline), deltaText(row.offline, row.offlinePrevious), `${gap >= 0 ? "+" : "−"}${formatNumber(Math.abs(gap))}`, deltaText(gap, previousGap), rate(ratioValue), deltaText(ratioValue, previousRatioValue)];
-    }));
+      const parent = ["SPU", row.brand, row.category, row.spu, "", row.spu, formatNumber(row.online), deltaText(row.online, row.onlinePrevious), formatNumber(row.offline), deltaText(row.offline, row.offlinePrevious), `${gap >= 0 ? "+" : "-"}${formatNumber(Math.abs(gap))}`, deltaText(gap, previousGap), rate(ratioValue), deltaText(ratioValue, previousRatioValue)];
+      const children = row.children.map((sku) => {
+        const skuGap = sku.online - sku.offline;
+        const previousSkuGap = sku.onlinePrevious - sku.offlinePrevious;
+        const skuRatio = sku.offline > 0 ? sku.online / sku.offline : null;
+        const previousSkuRatio = sku.offlinePrevious > 0 ? sku.onlinePrevious / sku.offlinePrevious : null;
+        return ["SKU", sku.brand, sku.category, sku.spu, sku.id, sku.product, formatNumber(sku.online), deltaText(sku.online, sku.onlinePrevious), formatNumber(sku.offline), deltaText(sku.offline, sku.offlinePrevious), `${skuGap >= 0 ? "+" : "-"}${formatNumber(Math.abs(skuGap))}`, deltaText(skuGap, previousSkuGap), rate(skuRatio), deltaText(skuRatio, previousSkuRatio)];
+      });
+      return [parent, ...children];
+    });
+    exportExcel("台湾线上销售分析-线上线下SPU销量明细", "SPU销量明细", ["层级", "品牌", "品类", "SPU", "SKU码", "SKU名", "线上销量", "线上销量环比", "线下销量", "线下销量环比", "线上－线下", "差距环比", "线上vs线下", "倍数环比"], exportRows);
   };
-  return <><TableExportButton label="导出 Excel" onClick={exportSkuRows} count={sorted.length} /><div className="table-wrap channel-table"><table><colgroup><col className="channel-col-brand" /><col className="channel-col-category" /><col className="channel-col-sku" /><col className="channel-col-product" /><col className="channel-col-metric" /><col className="channel-col-metric" /><col className="channel-col-gap" /><col className="channel-col-share" /></colgroup><thead><tr>{columns.filter((column) => column.key !== "total").map((column) => <SortableHeader key={column.key} label={column.label} active={sort.key === column.key} direction={sort.direction} onClick={() => sortBy(column)} />)}</tr></thead><tbody>{sorted.map((row) => {
+  return <><TableExportButton label="导出 Excel" onClick={exportSpuRows} count={sorted.length} /><div className="table-wrap channel-table"><table><colgroup><col className="channel-col-brand" /><col className="channel-col-category" /><col className="channel-col-spu" /><col className="channel-col-product" /><col className="channel-col-metric" /><col className="channel-col-metric" /><col className="channel-col-gap" /><col className="channel-col-share" /></colgroup><thead><tr>{columns.filter((column) => column.key !== "total").map((column) => <SortableHeader key={column.key} label={column.label} active={sort.key === column.key} direction={sort.direction} onClick={() => sortBy(column)} />)}</tr></thead><tbody>{sorted.map((row) => {
     const gap = row.online - row.offline;
     const previousGap = row.onlinePrevious - row.offlinePrevious;
     const onlineOfflineRatio = row.offline > 0 ? row.online / row.offline : null;
     const previousOnlineOfflineRatio = row.offlinePrevious > 0 ? row.onlinePrevious / row.offlinePrevious : null;
-    return <tr key={row.key}><td><b style={{ color: BRAND_COLORS[row.brand] }}>{row.brand}</b></td><td><b>{row.category}</b></td><td><b>{row.id}</b></td><td className="channel-product"><b title={row.product || row.id}>{row.product || row.id}</b></td><MetricCell value={row.online} previous={row.onlinePrevious} format={formatNumber} /><MetricCell value={row.offline} previous={row.offlinePrevious} format={formatNumber} /><MetricCell value={gap} previous={previousGap} format={(value) => `${value >= 0 ? "+" : "−"}${formatNumber(Math.abs(value))}`} /><MetricCell value={onlineOfflineRatio} previous={previousOnlineOfflineRatio} format={rate} /></tr>;
+    return <Fragment key={row.key}><tr className="spu-row"><td><b style={{ color: BRAND_COLORS[row.brand] }}>{row.brand}</b></td><td><b>{row.category}</b></td><td className="channel-product"><button className="spu-toggle" type="button" onClick={() => toggle(row.key)} aria-expanded={expanded.has(row.key)}><i>{expanded.has(row.key) ? "-" : "+"}</i><b title={row.spu}>{row.spu}</b></button></td><td><b>{row.skuCount} 个SKU</b><small>点击展开 SKU</small></td><MetricCell value={row.online} previous={row.onlinePrevious} format={formatNumber} /><MetricCell value={row.offline} previous={row.offlinePrevious} format={formatNumber} /><MetricCell value={gap} previous={previousGap} format={(value) => `${value >= 0 ? "+" : "-"}${formatNumber(Math.abs(value))}`} /><MetricCell value={onlineOfflineRatio} previous={previousOnlineOfflineRatio} format={rate} /></tr>{expanded.has(row.key) && row.children.map((sku) => {
+      const skuGap = sku.online - sku.offline;
+      const previousSkuGap = sku.onlinePrevious - sku.offlinePrevious;
+      const skuRatio = sku.offline > 0 ? sku.online / sku.offline : null;
+      const previousSkuRatio = sku.offlinePrevious > 0 ? sku.onlinePrevious / sku.offlinePrevious : null;
+      return <tr key={`${row.key}-${sku.id}`} className="sku-child-row"><td /><td><small>{sku.category}</small></td><td><b>{sku.id}</b><small>SKU码</small></td><td className="channel-product"><b title={sku.product || sku.id}>{sku.product || sku.id}</b><small>SKU名</small></td><MetricCell value={sku.online} previous={sku.onlinePrevious} format={formatNumber} /><MetricCell value={sku.offline} previous={sku.offlinePrevious} format={formatNumber} /><MetricCell value={skuGap} previous={previousSkuGap} format={(value) => `${value >= 0 ? "+" : "-"}${formatNumber(Math.abs(value))}`} /><MetricCell value={skuRatio} previous={previousSkuRatio} format={rate} /></tr>;
+    })}</Fragment>;
   })}</tbody></table></div></>;
 }
 
@@ -1306,7 +1396,7 @@ export function SalesDashboard() {
     <section className="filter-bar"><div><label>品牌</label><select value={brand} onChange={(event) => setBrand(event.target.value as "ALL" | BrandKey)}><option value="ALL">全部品牌</option>{BRANDS.map((item) => <option value={item.key} key={item.key}>{item.key} · {item.name}</option>)}</select></div><div><label>主日期从</label><input type="date" value={currentRange.start} onChange={(event) => setCurrentRange((value) => ({ ...value, start: event.target.value }))} /></div><div><label>主日期到</label><input type="date" value={currentRange.end} onChange={(event) => setCurrentRange((value) => ({ ...value, end: event.target.value }))} /></div><div><label>环比日期从</label><input type="date" value={previousRange.start} onChange={(event) => setPreviousRange((value) => ({ ...value, start: event.target.value }))} /></div><div><label>环比日期到</label><input type="date" value={previousRange.end} onChange={(event) => setPreviousRange((value) => ({ ...value, end: event.target.value }))} /></div><div><label>商品ID / ID</label><input value={productId} onChange={(event) => setProductId(event.target.value)} placeholder="输入商品ID / ID" /></div><div><label>产品名</label><input value={product} onChange={(event) => setProduct(event.target.value)} placeholder="搜索产品名" /></div><div><label>品类</label><select value={category} onChange={(event) => setCategory(event.target.value)}><option value="">全部品类</option>{options.categories.map((item) => <option key={item}>{item}</option>)}</select></div><button className="reset-button" onClick={resetFilters}>重置筛选</button></section>
     <nav className="page-tabs">{PAGE_LABELS.map((item) => <button key={item.key} className={page === item.key ? "active" : ""} onClick={() => setPage(item.key)}><b>{item.number}</b><span>{item.label}</span><small>{item.note}</small></button>)}<span className="sync-state"><i className={error ? "error-dot" : ""} />{loading ? "同步中" : "数据已同步"}</span></nav>
     {error && <div className="data-alert"><b>数据同步失败</b><span>{error}</span><button onClick={() => setRefresh((value) => value + 1)}>重新同步</button></div>}
-    {page === "channels" ? <><ChannelSummary rows={channelData.rows} /><section className="data-page channel-page"><div className="section-title"><span>07</span><div><h2>线上 / 线下 SKU 销量对比</h2><p>线上数据来自台湾线上 SKU 销量表；线下汇总三品牌各通路原始 SKU 销量；本页独立按 SKU 产品名归类，不影响链接明细和品类进度。</p></div><em>{channelLoading ? "同步中" : `${channelData.rows.length} 个商品ID`}</em></div>{channelError && <div className="data-alert"><b>销量数据同步失败</b><span>{channelError}</span></div>}{channelLoading && channelData.rows.length === 0 ? <div className="loading-state"><span className="loading-mark" /><div><strong>正在同步线上与线下 SKU 销量</strong><p>按主日期范围和环比日期范围汇总商品ID</p></div></div> : <><div className="channel-subsection"><div><h3>品类销量对比</h3><p>先看各品牌品类层级的线上、线下差距与倍数。</p></div></div><ChannelCategoryTable rows={channelData.rows} brand={brand} /><div className="channel-subsection sku-subsection"><div><h3>SKU 销量明细</h3><p>再下钻到具体 SKU；排序只作用于本表。</p></div></div><ChannelTable rows={channelData.rows} brand={brand} /></>}</section></> : loading && data.length === 0 ? <div className="loading-state"><span className="loading-mark" /><div><strong>正在同步销售与广告数据</strong><p>读取三品牌的店铺、链接、商品ID和广告明细</p></div></div> : <>
+    {page === "channels" ? <><ChannelSummary rows={channelData.rows} /><section className="data-page channel-page"><div className="section-title"><span>07</span><div><h2>线上 / 线下 SKU 销量对比</h2><p>线上数据来自台湾线上 SKU 销量表；线下汇总三品牌各通路原始 SKU 销量；07 独立按 SKU 匹配到 SPU 与品类，不影响链接明细和品类进度。</p></div><em>{channelLoading ? "同步中" : `${channelData.rows.length} 个SKU`}</em></div>{channelError && <div className="data-alert"><b>销量数据同步失败</b><span>{channelError}</span></div>}{channelLoading && channelData.rows.length === 0 ? <div className="loading-state"><span className="loading-mark" /><div><strong>正在同步线上与线下 SKU 销量</strong><p>按主日期范围和环比日期范围汇总 SKU，再映射到 SPU</p></div></div> : <><div className="channel-subsection"><div><h3>品类销量对比</h3><p>先看各品牌品类层级的线上、线下差距与倍数。</p></div></div><ChannelCategoryTable rows={channelData.rows} brand={brand} /><div className="channel-subsection sku-subsection"><div><h3>SPU 销量明细</h3><p>默认按 SPU 汇总；展开后查看 SKU 码和 SKU 名。</p></div></div><ChannelSpuTable rows={channelData.rows} brand={brand} /></>}</section></> : loading && data.length === 0 ? <div className="loading-state"><span className="loading-mark" /><div><strong>正在同步销售与广告数据</strong><p>读取三品牌的店铺、链接、商品ID和广告明细</p></div></div> : <>
       {page === "overview" && <>
         <section className="metric-grid"><MetricCard label="累计 GMV" value={formatMoney(total.gmv, true)} delta={ratio(total.gmv, total.previous)} note={`DMS折后实收 · 环比区间 ${formatMoney(total.previous, true)}`} color="#2364d8" /><MetricCard label="目标 GMV 达成" value={levelPercent(total.goal > 0 ? total.gmv / total.goal : null)} delta={total.goal > 0 ? (total.gmv - total.previous) / total.goal : null} deltaMode="pp" note={`目标 ${formatMoney(total.goal, true)}`} color="#ff766b" /><MetricCard label="综合费比" value={levelPercent(total.gmv > 0 ? total.adSpend / total.gmv : null)} delta={(total.gmv > 0 && total.previous > 0) ? total.adSpend / total.gmv - total.previousAdSpend / total.previous : null} deltaMode="pp" note="站内花费 / DMS GMV" color="#1ba89c" /><MetricCard label="综合 ROI" value={rate(totalRoi)} delta={ratio(totalRoi, previousTotalRoi || 0)} note={`DMS GMV / 站内花费`} color="#8d7bd8" /></section>
         <section className="metric-grid secondary"><MetricCard label="订单量" value={formatNumber(total.orders)} delta={ratio(total.orders, total.previousOrders)} note={`客单价 ${formatMoney(total.orders > 0 ? total.gmv / total.orders : 0)}`} color="#2364d8" /><MetricCard label="虾皮补贴券" value={formatMoney(total.voucher, true)} delta={ratio(total.voucher, total.previousVoucher)} note={`Voucher from shopee · 占GMV ${levelPercent(total.gmv > 0 ? total.voucher / total.gmv : null)}`} color="#ff766b" /><MetricCard label="加购量" value={formatNumber(total.cart)} delta={ratio(total.cart, total.previousCart)} note={`加购率 ${levelPercent(total.visitors > 0 ? total.cart / total.visitors : null)}`} color="#1ba89c" /><MetricCard label="广告GMV占比" value={levelPercent(total.gmv > 0 ? total.adGmv / total.gmv : null)} delta={(total.gmv > 0 && total.previous > 0) ? total.adGmv / total.gmv - total.previousAdGmv / total.previous : null} deltaMode="pp" note={`自然GMV ${formatMoney(Math.max(0, total.gmv - total.adGmv), true)}`} color="#8d7bd8" /></section>
