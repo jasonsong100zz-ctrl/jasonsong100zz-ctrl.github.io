@@ -231,7 +231,15 @@ td.metric-value small { font-size: 9px; }
 .channel-subsection h3 { margin: 0; color: var(--ink); font-size: 14px; }
 .channel-subsection p { margin: 4px 0 0; color: #758aa8; font-size: 10px; }
 .channel-subsection.sku-subsection { margin-top: 15px; }
-.channel-category-table { max-height: 360px; overflow: auto; margin-bottom: 6px; }
+.channel-brand-tables { display: grid; gap: 12px; margin-bottom: 8px; }
+.channel-brand-block { overflow: hidden; border: 1px solid color-mix(in srgb, var(--brand-color) 28%, var(--line)); border-radius: 14px; background: #fff; box-shadow: 0 8px 20px color-mix(in srgb, var(--brand-color) 7%, transparent); }
+.channel-brand-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 11px 14px; border-bottom: 1px solid color-mix(in srgb, var(--brand-color) 18%, var(--line)); background: linear-gradient(90deg, color-mix(in srgb, var(--brand-color) 9%, #fff), #fff 58%); }
+.channel-brand-head div { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.channel-brand-head b { color: var(--brand-color); font-size: 16px; font-weight: 900; letter-spacing: .03em; }
+.channel-brand-head span { color: #7a8da7; font-size: 10px; font-weight: 800; }
+.channel-brand-head em { flex: 0 0 auto; color: #7890ad; font-size: 10px; font-style: normal; font-weight: 800; }
+.channel-brand-block .table-actions { margin: 9px 12px 7px; }
+.channel-category-table { max-height: 260px; overflow: auto; margin: 0 12px 12px; }
 .channel-category-table table { min-width: 760px; table-layout: fixed; }
 .channel-category-table thead th { position: sticky; top: 0; z-index: 4; box-shadow: 0 1px 0 var(--line); }
 .channel-category-table th,
@@ -241,7 +249,7 @@ td.metric-value small { font-size: 9px; }
 .channel-category-table td.metric-value b { font-size: 10px; }
 .channel-category-table td.metric-value small { font-size: 8px; }
 .channel-table table { min-width: 920px; table-layout: fixed; }
-.channel-table { max-height: 720px; overflow: auto; }
+.channel-table { max-height: 520px; overflow: auto; margin: 0 12px 12px; }
 .channel-table thead th { position: sticky; top: 0; z-index: 4; box-shadow: 0 1px 0 var(--line); }
 .channel-table .channel-col-brand { width: 6%; }
 .channel-table .channel-col-category { width: 10%; }
@@ -251,6 +259,9 @@ td.metric-value small { font-size: 9px; }
 .channel-table .channel-col-metric { width: 9.5%; }
 .channel-table .channel-col-gap { width: 12%; }
 .channel-table .channel-col-share { width: 14.5%; }
+.channel-spu-table .channel-col-category { width: 10%; }
+.channel-spu-table .channel-col-spu { width: 20%; }
+.channel-spu-table .channel-col-product { width: 15%; }
 .channel-table th,
 .channel-table td { padding: 7px 7px; }
 .channel-table th { padding: 8px 7px; }

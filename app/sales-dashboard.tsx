@@ -1180,11 +1180,25 @@ function ChannelSummary({ rows }: { rows: ChannelSkuRow[] }) {
   })}</section>;
 }
 
+function channelBrandItems(brand: "ALL" | BrandKey) {
+  return brand === "ALL" ? BRANDS : BRANDS.filter((item) => item.key === brand);
+}
+
 function ChannelCategoryTable({ rows, brand }: { rows: ChannelSkuRow[]; brand: "ALL" | BrandKey }) {
+  return <div className="channel-brand-tables">{channelBrandItems(brand).map((item) => {
+    const brandRows = rows.filter((row) => row.brand === item.key);
+    return <article className="channel-brand-block" style={{ "--brand-color": BRAND_COLORS[item.key] } as React.CSSProperties} key={item.key}>
+      <div className="channel-brand-head"><div><b>{item.key}</b><span>{item.name}</span></div><em>{brandRows.length} SKU</em></div>
+      <ChannelCategoryBrandTable rows={brandRows} brand={item.key} />
+    </article>;
+  })}</div>;
+}
+
+function ChannelCategoryBrandTable({ rows, brand }: { rows: ChannelSkuRow[]; brand: BrandKey }) {
   const [sort, setSort] = useState<SortState>({ key: "total", direction: "desc" });
   const categoryRows = useMemo(() => {
     const groups = new Map<string, ChannelRollupRow>();
-    rows.filter((row) => brand === "ALL" || row.brand === brand).forEach((row) => {
+    rows.forEach((row) => {
       const key = `${row.brand}-${row.category}`;
       const existing = groups.get(key) || { key, brand: row.brand, category: row.category, online: 0, onlinePrevious: 0, offline: 0, offlinePrevious: 0 };
       existing.online += row.online;
@@ -1194,9 +1208,8 @@ function ChannelCategoryTable({ rows, brand }: { rows: ChannelSkuRow[]; brand: "
       groups.set(key, existing);
     });
     return [...groups.values()];
-  }, [rows, brand]);
+  }, [rows]);
   const columns: SortColumn<ChannelRollupRow>[] = [
-    { key: "brand", label: "品牌", value: (row) => row.brand, defaultDirection: "asc" },
     { key: "category", label: "品类", value: (row) => row.category, defaultDirection: "asc" },
     { key: "online", label: "线上销量", value: (row) => row.online },
     { key: "offline", label: "线下销量", value: (row) => row.offline },
@@ -1211,29 +1224,39 @@ function ChannelCategoryTable({ rows, brand }: { rows: ChannelSkuRow[]; brand: "
   });
   const sortBy = (column: SortColumn<ChannelRollupRow>) => setSort((current) => current.key === column.key ? { key: column.key, direction: current.direction === "asc" ? "desc" : "asc" } : { key: column.key, direction: column.defaultDirection || "desc" });
   const exportCategoryRows = () => {
-    exportExcel("台湾线上销售分析-线上线下品类销量对比", "品类销量对比", ["品牌", "品类", "线上销量", "线上销量环比", "线下销量", "线下销量环比", "线上－线下", "差距环比", "线上vs线下", "倍数环比"], sorted.map((row) => {
+    exportExcel(`台湾线上销售分析-${brand}线上线下品类销量对比`, `${brand}品类销量对比`, ["品牌", "品类", "线上销量", "线上销量环比", "线下销量", "线下销量环比", "线上－线下", "差距环比", "线上vs线下", "倍数环比"], sorted.map((row) => {
       const gap = row.online - row.offline;
       const previousGap = row.onlinePrevious - row.offlinePrevious;
       const ratioValue = channelRatio(row);
       const previousRatioValue = previousChannelRatio(row);
-      return [row.brand, row.category, formatNumber(row.online), deltaText(row.online, row.onlinePrevious), formatNumber(row.offline), deltaText(row.offline, row.offlinePrevious), `${gap >= 0 ? "+" : "−"}${formatNumber(Math.abs(gap))}`, deltaText(gap, previousGap), rate(ratioValue), deltaText(ratioValue, previousRatioValue)];
+      return [row.brand, row.category, formatNumber(row.online), deltaText(row.online, row.onlinePrevious), formatNumber(row.offline), deltaText(row.offline, row.offlinePrevious), `${gap >= 0 ? "+" : "-"}${formatNumber(Math.abs(gap))}`, deltaText(gap, previousGap), rate(ratioValue), deltaText(ratioValue, previousRatioValue)];
     }));
   };
-  return <><TableExportButton label="导出 Excel" onClick={exportCategoryRows} count={sorted.length} /><div className="table-wrap channel-category-table"><table><thead><tr>{columns.filter((column) => column.key !== "total").map((column) => <SortableHeader key={column.key} label={column.label} active={sort.key === column.key} direction={sort.direction} onClick={() => sortBy(column)} />)}</tr></thead><tbody>{sorted.map((row) => {
+  return <><TableExportButton label="导出 Excel" onClick={exportCategoryRows} count={sorted.length} /><div className="table-wrap channel-category-table"><table><thead><tr>{columns.filter((column) => column.key !== "total").map((column) => <SortableHeader key={column.key} label={column.label} active={sort.key === column.key} direction={sort.direction} onClick={() => sortBy(column)} />)}</tr></thead><tbody>{sorted.length === 0 ? <tr><td colSpan={5}>暂无数据</td></tr> : sorted.map((row) => {
     const gap = row.online - row.offline;
     const previousGap = row.onlinePrevious - row.offlinePrevious;
     const ratioValue = channelRatio(row);
     const previousRatioValue = previousChannelRatio(row);
-    return <tr key={row.key}><td><b style={{ color: BRAND_COLORS[row.brand] }}>{row.brand}</b></td><td><b>{row.category}</b></td><MetricCell value={row.online} previous={row.onlinePrevious} format={formatNumber} /><MetricCell value={row.offline} previous={row.offlinePrevious} format={formatNumber} /><MetricCell value={gap} previous={previousGap} format={(value) => `${value >= 0 ? "+" : "−"}${formatNumber(Math.abs(value))}`} /><MetricCell value={ratioValue} previous={previousRatioValue} format={rate} /></tr>;
+    return <tr key={row.key}><td><b>{row.category}</b></td><MetricCell value={row.online} previous={row.onlinePrevious} format={formatNumber} /><MetricCell value={row.offline} previous={row.offlinePrevious} format={formatNumber} /><MetricCell value={gap} previous={previousGap} format={(value) => `${value >= 0 ? "+" : "-"}${formatNumber(Math.abs(value))}`} /><MetricCell value={ratioValue} previous={previousRatioValue} format={rate} /></tr>;
   })}</tbody></table></div></>;
 }
 
 function ChannelSpuTable({ rows, brand }: { rows: ChannelSkuRow[]; brand: "ALL" | BrandKey }) {
+  return <div className="channel-brand-tables spu-brand-tables">{channelBrandItems(brand).map((item) => {
+    const brandRows = rows.filter((row) => row.brand === item.key);
+    return <article className="channel-brand-block" style={{ "--brand-color": BRAND_COLORS[item.key] } as React.CSSProperties} key={item.key}>
+      <div className="channel-brand-head"><div><b>{item.key}</b><span>{item.name}</span></div><em>{brandRows.length} SKU</em></div>
+      <ChannelSpuBrandTable rows={brandRows} brand={item.key} />
+    </article>;
+  })}</div>;
+}
+
+function ChannelSpuBrandTable({ rows, brand }: { rows: ChannelSkuRow[]; brand: BrandKey }) {
   const [sort, setSort] = useState<SortState>({ key: "total", direction: "desc" });
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const spuRows = useMemo(() => {
     const groups = new Map<string, ChannelSpuRow>();
-    rows.filter((row) => brand === "ALL" || row.brand === brand).forEach((row) => {
+    rows.forEach((row) => {
       const key = `${row.brand}-${row.category}-${row.spu}`;
       const existing = groups.get(key) || { key, brand: row.brand, category: row.category, spu: row.spu, product: row.spu, skuCount: 0, children: [], online: 0, onlinePrevious: 0, offline: 0, offlinePrevious: 0 };
       existing.children.push(row);
@@ -1245,9 +1268,8 @@ function ChannelSpuTable({ rows, brand }: { rows: ChannelSkuRow[]; brand: "ALL" 
       groups.set(key, existing);
     });
     return [...groups.values()].map((row) => ({ ...row, children: [...row.children].sort((a, b) => (b.online + b.offline) - (a.online + a.offline)) }));
-  }, [rows, brand]);
+  }, [rows]);
   const columns: SortColumn<ChannelSpuRow>[] = [
-    { key: "brand", label: "品牌", value: (row) => row.brand, defaultDirection: "asc" },
     { key: "category", label: "品类", value: (row) => row.category, defaultDirection: "asc" },
     { key: "spu", label: "SPU / SKU码", value: (row) => row.spu, defaultDirection: "asc" },
     { key: "skuCount", label: "SKU名", value: (row) => row.skuCount },
@@ -1285,19 +1307,19 @@ function ChannelSpuTable({ rows, brand }: { rows: ChannelSkuRow[]; brand: "ALL" 
       });
       return [parent, ...children];
     });
-    exportExcel("台湾线上销售分析-线上线下SPU销量明细", "SPU销量明细", ["层级", "品牌", "品类", "SPU", "SKU码", "SKU名", "线上销量", "线上销量环比", "线下销量", "线下销量环比", "线上－线下", "差距环比", "线上vs线下", "倍数环比"], exportRows);
+    exportExcel(`台湾线上销售分析-${brand}线上线下SPU销量明细`, `${brand}SPU销量明细`, ["层级", "品牌", "品类", "SPU", "SKU码", "SKU名", "线上销量", "线上销量环比", "线下销量", "线下销量环比", "线上－线下", "差距环比", "线上vs线下", "倍数环比"], exportRows);
   };
-  return <><TableExportButton label="导出 Excel" onClick={exportSpuRows} count={sorted.length} /><div className="table-wrap channel-table"><table><colgroup><col className="channel-col-brand" /><col className="channel-col-category" /><col className="channel-col-spu" /><col className="channel-col-product" /><col className="channel-col-metric" /><col className="channel-col-metric" /><col className="channel-col-gap" /><col className="channel-col-share" /></colgroup><thead><tr>{columns.filter((column) => column.key !== "total").map((column) => <SortableHeader key={column.key} label={column.label} active={sort.key === column.key} direction={sort.direction} onClick={() => sortBy(column)} />)}</tr></thead><tbody>{sorted.map((row) => {
+  return <><TableExportButton label="导出 Excel" onClick={exportSpuRows} count={sorted.length} /><div className="table-wrap channel-table channel-spu-table"><table><colgroup><col className="channel-col-category" /><col className="channel-col-spu" /><col className="channel-col-product" /><col className="channel-col-metric" /><col className="channel-col-metric" /><col className="channel-col-gap" /><col className="channel-col-share" /></colgroup><thead><tr>{columns.filter((column) => column.key !== "total").map((column) => <SortableHeader key={column.key} label={column.label} active={sort.key === column.key} direction={sort.direction} onClick={() => sortBy(column)} />)}</tr></thead><tbody>{sorted.length === 0 ? <tr><td colSpan={7}>暂无数据</td></tr> : sorted.map((row) => {
     const gap = row.online - row.offline;
     const previousGap = row.onlinePrevious - row.offlinePrevious;
     const onlineOfflineRatio = row.offline > 0 ? row.online / row.offline : null;
     const previousOnlineOfflineRatio = row.offlinePrevious > 0 ? row.onlinePrevious / row.offlinePrevious : null;
-    return <Fragment key={row.key}><tr className="spu-row"><td><b style={{ color: BRAND_COLORS[row.brand] }}>{row.brand}</b></td><td><b>{row.category}</b></td><td className="channel-product"><button className="spu-toggle" type="button" onClick={() => toggle(row.key)} aria-expanded={expanded.has(row.key)}><i>{expanded.has(row.key) ? "-" : "+"}</i><b title={row.spu}>{row.spu}</b></button></td><td><b>{row.skuCount} 个SKU</b><small>点击展开 SKU</small></td><MetricCell value={row.online} previous={row.onlinePrevious} format={formatNumber} /><MetricCell value={row.offline} previous={row.offlinePrevious} format={formatNumber} /><MetricCell value={gap} previous={previousGap} format={(value) => `${value >= 0 ? "+" : "-"}${formatNumber(Math.abs(value))}`} /><MetricCell value={onlineOfflineRatio} previous={previousOnlineOfflineRatio} format={rate} /></tr>{expanded.has(row.key) && row.children.map((sku) => {
+    return <Fragment key={row.key}><tr className="spu-row"><td><b>{row.category}</b></td><td className="channel-product"><button className="spu-toggle" type="button" onClick={() => toggle(row.key)} aria-expanded={expanded.has(row.key)}><i>{expanded.has(row.key) ? "-" : "+"}</i><b title={row.spu}>{row.spu}</b></button></td><td><b>{row.skuCount} 个SKU</b><small>点击展开 SKU</small></td><MetricCell value={row.online} previous={row.onlinePrevious} format={formatNumber} /><MetricCell value={row.offline} previous={row.offlinePrevious} format={formatNumber} /><MetricCell value={gap} previous={previousGap} format={(value) => `${value >= 0 ? "+" : "-"}${formatNumber(Math.abs(value))}`} /><MetricCell value={onlineOfflineRatio} previous={previousOnlineOfflineRatio} format={rate} /></tr>{expanded.has(row.key) && row.children.map((sku) => {
       const skuGap = sku.online - sku.offline;
       const previousSkuGap = sku.onlinePrevious - sku.offlinePrevious;
       const skuRatio = sku.offline > 0 ? sku.online / sku.offline : null;
       const previousSkuRatio = sku.offlinePrevious > 0 ? sku.onlinePrevious / sku.offlinePrevious : null;
-      return <tr key={`${row.key}-${sku.id}`} className="sku-child-row"><td /><td><small>{sku.category}</small></td><td><b>{sku.id}</b><small>SKU码</small></td><td className="channel-product"><b title={sku.product || sku.id}>{sku.product || sku.id}</b><small>SKU名</small></td><MetricCell value={sku.online} previous={sku.onlinePrevious} format={formatNumber} /><MetricCell value={sku.offline} previous={sku.offlinePrevious} format={formatNumber} /><MetricCell value={skuGap} previous={previousSkuGap} format={(value) => `${value >= 0 ? "+" : "-"}${formatNumber(Math.abs(value))}`} /><MetricCell value={skuRatio} previous={previousSkuRatio} format={rate} /></tr>;
+      return <tr key={`${row.key}-${sku.id}`} className="sku-child-row"><td><small>{sku.category}</small></td><td><b>{sku.id}</b><small>SKU码</small></td><td className="channel-product"><b title={sku.product || sku.id}>{sku.product || sku.id}</b><small>SKU名</small></td><MetricCell value={sku.online} previous={sku.onlinePrevious} format={formatNumber} /><MetricCell value={sku.offline} previous={sku.offlinePrevious} format={formatNumber} /><MetricCell value={skuGap} previous={previousSkuGap} format={(value) => `${value >= 0 ? "+" : "-"}${formatNumber(Math.abs(value))}`} /><MetricCell value={skuRatio} previous={previousSkuRatio} format={rate} /></tr>;
     })}</Fragment>;
   })}</tbody></table></div></>;
 }
