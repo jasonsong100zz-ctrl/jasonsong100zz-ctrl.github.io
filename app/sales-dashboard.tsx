@@ -138,6 +138,19 @@ type ChannelSpuRow = {
 type ChannelData = { rows: ChannelSkuRow[] };
 type OffsiteConfig = { brand: BrandKey; spreadsheetId: string; gid: number; date: string; spend: string; impressions: string; clicks: string; purchaseValue: string; productName: string; category: string; typeColumns: string[] };
 type OffsiteMapRecord = { brand: BrandKey; id: string; link: string; category: string };
+type OffsiteApiRow = {
+  brand: BrandKey;
+  link_id?: string;
+  link_name?: string;
+  category?: string;
+  spend?: number | string;
+  impressions?: number | string;
+  clicks?: number | string;
+  purchase_value?: number | string;
+  co_create_spend?: number | string;
+  graphic_spend?: number | string;
+  brand_ad_spend?: number | string;
+};
 type OffsiteRow = {
   key: string;
   brand: BrandKey;
@@ -168,6 +181,7 @@ const PAGE_LABELS: Array<{ key: PageKey; label: string; note: string; number: st
 const ONLINE_SKU_SHEET_ID = "16hb3YZRtu0jnU0hHeL1SGHirR4lWzItGlW1LQ0zj5GU";
 const OFFSITE_PRODUCT_MAP_SHEET_ID = "1f77vjXSXYPRo531hdNoS_BWdNBqzNwcLW-56TF8IcFw";
 const OFFSITE_PRODUCT_MAP_GID = 1697343653;
+const OFFSITE_API_URL = "https://tw-offsite-api-26k2ltlrsq-de.a.run.app";
 const MAPPING_GID = 1668472749;
 const MAINTAINED_MAPPING_GID = 305051712;
 const OFFSITE_CONFIGS: OffsiteConfig[] = [
@@ -852,6 +866,67 @@ async function loadBrand(config: BrandConfig, period: DateRange, previousPeriod:
 }
 
 async function loadOffsiteData(period: DateRange, brands: BrandData[], exchangeRate = DEFAULT_TWD_TO_CNY) {
+  {
+    const url = new URL(`${OFFSITE_API_URL}/offsite`);
+    url.searchParams.set("start", period.start);
+    url.searchParams.set("end", period.end);
+    const response = await fetch(url.toString(), { cache: "no-store" });
+    const payload = await response.json().catch(() => null) as { rows?: OffsiteApiRow[]; error?: string; detail?: string } | null;
+    if (!response.ok) throw new Error(payload?.detail || payload?.error || "BigQuery 站外广告接口读取失败");
+    const linkById = new Map<string, MetricRow>();
+    const linkByName = new Map<string, MetricRow>();
+    brands.forEach((brandData) => {
+      brandData.links.forEach((link) => {
+        if (link.id) linkById.set(`${link.brand}:${normalizeId(link.id)}`, link);
+        [link.link, link.product].filter(Boolean).forEach((name) => linkByName.set(`${link.brand}:${normalizeLookupText(name)}`, link));
+      });
+    });
+    const toNumber = (value: number | string | undefined) => (typeof value === "number" ? value : Number(value || 0)) || 0;
+    const cleanText = (value: string | undefined) => {
+      const text = (value || "").trim();
+      return text && text !== "/" && text !== "-" ? text : "";
+    };
+    const groups = new Map<string, OffsiteRow>();
+    (payload?.rows || []).forEach((row, rowIndex) => {
+      const brand = row.brand;
+      const sourceName = cleanText(row.link_name);
+      const isMixed = /混合目录|混合目錄/i.test(sourceName);
+      const id = normalizeId(cleanText(row.link_id));
+      const linkFromSales = id ? linkById.get(`${brand}:${id}`) : linkByName.get(`${brand}:${normalizeLookupText(sourceName)}`);
+      const link = isMixed ? "混合目录" : sourceName || linkFromSales?.product || "未填写";
+      const category = isMixed ? "" : cleanText(row.category) || linkFromSales?.category || FALLBACK_CATEGORY;
+      const key = `${brand}:${isMixed ? "mixed" : id || normalizeLookupText(link) || rowIndex}`;
+      const existing = groups.get(key) || {
+        key,
+        brand,
+        id,
+        category,
+        link,
+        linkGmv: isMixed ? null : linkFromSales?.gmv ?? null,
+        linkVisitors: isMixed ? null : linkFromSales?.visitors ?? null,
+        spend: 0,
+        impressions: 0,
+        clicks: 0,
+        purchaseValue: 0,
+        coCreateSpend: 0,
+        graphicSpend: 0,
+        brandAdSpend: 0,
+      };
+      existing.spend += toNumber(row.spend);
+      existing.impressions += toNumber(row.impressions);
+      existing.clicks += toNumber(row.clicks);
+      existing.purchaseValue += toNumber(row.purchase_value);
+      existing.coCreateSpend += toNumber(row.co_create_spend);
+      existing.graphicSpend += toNumber(row.graphic_spend);
+      existing.brandAdSpend += toNumber(row.brand_ad_spend);
+      if (!existing.id && id) existing.id = id;
+      if (!existing.category && category) existing.category = category;
+      if (!existing.linkGmv && !isMixed && linkFromSales) existing.linkGmv = linkFromSales.gmv;
+      if (!existing.linkVisitors && !isMixed && linkFromSales) existing.linkVisitors = linkFromSales.visitors;
+      groups.set(key, existing);
+    });
+    return [...groups.values()].sort((left, right) => right.spend - left.spend);
+  }
   const [productMapRows, ...sourceRows] = await Promise.all([
     loadSheetCsv(OFFSITE_PRODUCT_MAP_GID, OFFSITE_PRODUCT_MAP_SHEET_ID),
     ...OFFSITE_CONFIGS.map((config) => loadSheetCsv(config.gid, config.spreadsheetId)),
