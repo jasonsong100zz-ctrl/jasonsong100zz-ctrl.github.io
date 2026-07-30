@@ -158,14 +158,23 @@ type OffsiteRow = {
   category: string;
   link: string;
   linkGmv: number | null;
+  previousLinkGmv: number | null;
   linkVisitors: number | null;
+  previousLinkVisitors: number | null;
   spend: number;
+  previousSpend: number;
   impressions: number;
+  previousImpressions: number;
   clicks: number;
+  previousClicks: number;
   purchaseValue: number;
+  previousPurchaseValue: number;
   coCreateSpend: number;
+  previousCoCreateSpend: number;
   graphicSpend: number;
+  previousGraphicSpend: number;
   brandAdSpend: number;
+  previousBrandAdSpend: number;
 };
 const FALLBACK_CATEGORY = "其他/赠品";
 
@@ -865,14 +874,18 @@ async function loadBrand(config: BrandConfig, period: DateRange, previousPeriod:
   } satisfies BrandData;
 }
 
-async function loadOffsiteData(period: DateRange, brands: BrandData[], exchangeRate = DEFAULT_TWD_TO_CNY) {
+async function loadOffsiteData(period: DateRange, previousPeriod: DateRange, brands: BrandData[], exchangeRate = DEFAULT_TWD_TO_CNY) {
   {
-    const url = new URL(`${OFFSITE_API_URL}/offsite`);
-    url.searchParams.set("start", period.start);
-    url.searchParams.set("end", period.end);
-    const response = await fetch(url.toString(), { cache: "no-store" });
-    const payload = await response.json().catch(() => null) as { rows?: OffsiteApiRow[]; error?: string; detail?: string } | null;
-    if (!response.ok) throw new Error(payload?.detail || payload?.error || "BigQuery 站外广告接口读取失败");
+    const fetchRows = async (range: DateRange) => {
+      const url = new URL(`${OFFSITE_API_URL}/offsite`);
+      url.searchParams.set("start", range.start);
+      url.searchParams.set("end", range.end);
+      const response = await fetch(url.toString(), { cache: "no-store" });
+      const payload = await response.json().catch(() => null) as { rows?: OffsiteApiRow[]; error?: string; detail?: string } | null;
+      if (!response.ok) throw new Error(payload?.detail || payload?.error || "BigQuery 站外广告接口读取失败");
+      return payload?.rows || [];
+    };
+    const [currentRows, previousRows] = await Promise.all([fetchRows(period), fetchRows(previousPeriod)]);
     const linkById = new Map<string, MetricRow>();
     const linkByName = new Map<string, MetricRow>();
     brands.forEach((brandData) => {
@@ -887,15 +900,16 @@ async function loadOffsiteData(period: DateRange, brands: BrandData[], exchangeR
       return text && text !== "/" && text !== "-" ? text : "";
     };
     const groups = new Map<string, OffsiteRow>();
-    (payload?.rows || []).forEach((row, rowIndex) => {
+    currentRows.forEach((row, rowIndex) => {
       const brand = row.brand;
       const sourceName = cleanText(row.link_name);
       const isMixed = /混合目录|混合目錄/i.test(sourceName);
-      const id = normalizeId(cleanText(row.link_id));
+      const rawId = cleanText(row.link_id);
+      const id = rawId ? normalizeId(rawId) : "";
       const linkFromSales = id ? linkById.get(`${brand}:${id}`) : linkByName.get(`${brand}:${normalizeLookupText(sourceName)}`);
       const link = isMixed ? "混合目录" : sourceName || linkFromSales?.product || "未填写";
       const category = isMixed ? "" : cleanText(row.category) || linkFromSales?.category || FALLBACK_CATEGORY;
-      const key = `${brand}:${isMixed ? "mixed" : id || normalizeLookupText(link) || rowIndex}`;
+      const key = `${brand}:${isMixed ? "mixed" : id || normalizeLookupText(link) || normalizeLookupText(sourceName) || `row-${rowIndex}`}`;
       const existing = groups.get(key) || {
         key,
         brand,
@@ -903,14 +917,23 @@ async function loadOffsiteData(period: DateRange, brands: BrandData[], exchangeR
         category,
         link,
         linkGmv: isMixed ? null : linkFromSales?.gmv ?? null,
+        previousLinkGmv: isMixed ? null : linkFromSales?.previousGmv ?? null,
         linkVisitors: isMixed ? null : linkFromSales?.visitors ?? null,
+        previousLinkVisitors: isMixed ? null : linkFromSales?.previousVisitors ?? null,
         spend: 0,
+        previousSpend: 0,
         impressions: 0,
+        previousImpressions: 0,
         clicks: 0,
+        previousClicks: 0,
         purchaseValue: 0,
+        previousPurchaseValue: 0,
         coCreateSpend: 0,
+        previousCoCreateSpend: 0,
         graphicSpend: 0,
+        previousGraphicSpend: 0,
         brandAdSpend: 0,
+        previousBrandAdSpend: 0,
       };
       existing.spend += toNumber(row.spend);
       existing.impressions += toNumber(row.impressions);
@@ -921,11 +944,64 @@ async function loadOffsiteData(period: DateRange, brands: BrandData[], exchangeR
       existing.brandAdSpend += toNumber(row.brand_ad_spend);
       if (!existing.id && id) existing.id = id;
       if (!existing.category && category) existing.category = category;
-      if (!existing.linkGmv && !isMixed && linkFromSales) existing.linkGmv = linkFromSales.gmv;
-      if (!existing.linkVisitors && !isMixed && linkFromSales) existing.linkVisitors = linkFromSales.visitors;
+      if (existing.linkGmv === null && !isMixed && linkFromSales) existing.linkGmv = linkFromSales.gmv;
+      if (existing.previousLinkGmv === null && !isMixed && linkFromSales) existing.previousLinkGmv = linkFromSales.previousGmv;
+      if (existing.linkVisitors === null && !isMixed && linkFromSales) existing.linkVisitors = linkFromSales.visitors;
+      if (existing.previousLinkVisitors === null && !isMixed && linkFromSales) existing.previousLinkVisitors = linkFromSales.previousVisitors;
       groups.set(key, existing);
     });
-    return [...groups.values()].sort((left, right) => right.spend - left.spend);
+    previousRows.forEach((row, rowIndex) => {
+      const brand = row.brand;
+      const sourceName = cleanText(row.link_name);
+      const isMixed = /混合目录|混合目錄/i.test(sourceName);
+      const rawId = cleanText(row.link_id);
+      const id = rawId ? normalizeId(rawId) : "";
+      const linkFromSales = id ? linkById.get(`${brand}:${id}`) : linkByName.get(`${brand}:${normalizeLookupText(sourceName)}`);
+      const link = isMixed ? "混合目录" : sourceName || linkFromSales?.product || "未填写";
+      const category = isMixed ? "" : cleanText(row.category) || linkFromSales?.category || FALLBACK_CATEGORY;
+      const key = `${brand}:${isMixed ? "mixed" : id || normalizeLookupText(link) || normalizeLookupText(sourceName) || `row-${rowIndex}`}`;
+      const existing = groups.get(key) || {
+        key,
+        brand,
+        id,
+        category,
+        link,
+        linkGmv: isMixed ? null : linkFromSales?.gmv ?? null,
+        previousLinkGmv: isMixed ? null : linkFromSales?.previousGmv ?? null,
+        linkVisitors: isMixed ? null : linkFromSales?.visitors ?? null,
+        previousLinkVisitors: isMixed ? null : linkFromSales?.previousVisitors ?? null,
+        spend: 0,
+        previousSpend: 0,
+        impressions: 0,
+        previousImpressions: 0,
+        clicks: 0,
+        previousClicks: 0,
+        purchaseValue: 0,
+        previousPurchaseValue: 0,
+        coCreateSpend: 0,
+        previousCoCreateSpend: 0,
+        graphicSpend: 0,
+        previousGraphicSpend: 0,
+        brandAdSpend: 0,
+        previousBrandAdSpend: 0,
+      };
+      existing.previousSpend += toNumber(row.spend);
+      existing.previousImpressions += toNumber(row.impressions);
+      existing.previousClicks += toNumber(row.clicks);
+      existing.previousPurchaseValue += toNumber(row.purchase_value);
+      existing.previousCoCreateSpend += toNumber(row.co_create_spend);
+      existing.previousGraphicSpend += toNumber(row.graphic_spend);
+      existing.previousBrandAdSpend += toNumber(row.brand_ad_spend);
+      if (!existing.id && id) existing.id = id;
+      if (!existing.category && category) existing.category = category;
+      if ((!existing.link || existing.link === "未填写") && link) existing.link = link;
+      if (existing.linkGmv === null && !isMixed && linkFromSales) existing.linkGmv = linkFromSales.gmv;
+      if (existing.previousLinkGmv === null && !isMixed && linkFromSales) existing.previousLinkGmv = linkFromSales.previousGmv;
+      if (existing.linkVisitors === null && !isMixed && linkFromSales) existing.linkVisitors = linkFromSales.visitors;
+      if (existing.previousLinkVisitors === null && !isMixed && linkFromSales) existing.previousLinkVisitors = linkFromSales.previousVisitors;
+      groups.set(key, existing);
+    });
+    return [...groups.values()].sort((left, right) => (right.spend - left.spend) || (right.previousSpend - left.previousSpend));
   }
   const [productMapRows, ...sourceRows] = await Promise.all([
     loadSheetCsv(OFFSITE_PRODUCT_MAP_GID, OFFSITE_PRODUCT_MAP_SHEET_ID),
@@ -961,14 +1037,23 @@ async function loadOffsiteData(period: DateRange, brands: BrandData[], exchangeR
         category,
         link,
         linkGmv: isMixed ? null : linkFromSales?.gmv ?? null,
+        previousLinkGmv: isMixed ? null : linkFromSales?.previousGmv ?? null,
         linkVisitors: isMixed ? null : linkFromSales?.visitors ?? null,
+        previousLinkVisitors: isMixed ? null : linkFromSales?.previousVisitors ?? null,
         spend: 0,
+        previousSpend: 0,
         impressions: 0,
+        previousImpressions: 0,
         clicks: 0,
+        previousClicks: 0,
         purchaseValue: 0,
+        previousPurchaseValue: 0,
         coCreateSpend: 0,
+        previousCoCreateSpend: 0,
         graphicSpend: 0,
+        previousGraphicSpend: 0,
         brandAdSpend: 0,
+        previousBrandAdSpend: 0,
       };
       existing.spend += spend;
       existing.impressions += csvNumberAt(row, config.impressions);
@@ -979,8 +1064,10 @@ async function loadOffsiteData(period: DateRange, brands: BrandData[], exchangeR
       else existing.graphicSpend += spend;
       if (!existing.id && id) existing.id = id;
       if (!existing.category && category) existing.category = category;
-      if (!existing.linkGmv && !isMixed && linkFromSales) existing.linkGmv = linkFromSales.gmv;
-      if (!existing.linkVisitors && !isMixed && linkFromSales) existing.linkVisitors = linkFromSales.visitors;
+      if (existing.linkGmv === null && !isMixed && linkFromSales) existing.linkGmv = linkFromSales.gmv;
+      if (existing.previousLinkGmv === null && !isMixed && linkFromSales) existing.previousLinkGmv = linkFromSales.previousGmv;
+      if (existing.linkVisitors === null && !isMixed && linkFromSales) existing.linkVisitors = linkFromSales.visitors;
+      if (existing.previousLinkVisitors === null && !isMixed && linkFromSales) existing.previousLinkVisitors = linkFromSales.previousVisitors;
       groups.set(key, existing);
     });
   });
@@ -1359,6 +1446,7 @@ function Table({ rows, type }: { rows: MetricRow[]; type: "category" | "link" | 
 
 function OffsiteTable({ rows }: { rows: OffsiteRow[] }) {
   const [sort, setSort] = useState<SortState>({ key: "spend", direction: "desc" });
+  const share = (part: number, total: number) => total > 0 ? part / total : null;
   const columns: SortColumn<OffsiteRow>[] = [
     { key: "category", label: "类目", value: (row) => row.category, defaultDirection: "asc" },
     { key: "link", label: "链接简称", value: (row) => row.link, defaultDirection: "asc" },
@@ -1368,9 +1456,9 @@ function OffsiteTable({ rows }: { rows: OffsiteRow[] }) {
     { key: "impressions", label: "曝光", value: (row) => row.impressions },
     { key: "clicks", label: "点击量", value: (row) => row.clicks },
     { key: "purchaseValue", label: "成交金额", value: (row) => row.purchaseValue },
-    { key: "coCreate", label: "合创", value: (row) => row.spend > 0 ? row.coCreateSpend / row.spend : null },
-    { key: "graphic", label: "图文", value: (row) => row.spend > 0 ? row.graphicSpend / row.spend : null },
-    { key: "brandAd", label: "品牌广告", value: (row) => row.spend > 0 ? row.brandAdSpend / row.spend : null },
+    { key: "coCreate", label: "合创", value: (row) => share(row.coCreateSpend, row.spend) },
+    { key: "graphic", label: "图文", value: (row) => share(row.graphicSpend, row.spend) },
+    { key: "brandAd", label: "品牌广告", value: (row) => share(row.brandAdSpend, row.spend) },
   ];
   const sortColumn = columns.find((column) => column.key === sort.key) || columns[4];
   const sorted = [...rows].sort((a, b) => {
@@ -1378,11 +1466,51 @@ function OffsiteTable({ rows }: { rows: OffsiteRow[] }) {
     return sort.direction === "asc" ? result : -result;
   });
   const sortBy = (column: SortColumn<OffsiteRow>) => setSort((current) => current.key === column.key ? { key: column.key, direction: current.direction === "asc" ? "desc" : "asc" } : { key: column.key, direction: column.defaultDirection || "desc" });
-  const share = (part: number, total: number) => total > 0 ? part / total : null;
   const exportOffsiteRows = () => {
-    exportExcel("台湾线上销售分析-站外广告数据", "站外广告数据", ["品牌", "类目", "链接简称", "商品ID / ID", "链接GMV", "链接访客", "站外花费", "曝光", "点击量", "成交金额", "合创占比", "图文占比", "品牌广告占比"], sorted.map((row) => [row.brand, row.category || "", row.link, row.id || "", row.linkGmv === null ? "" : formatMoney(row.linkGmv, true), row.linkVisitors === null ? "" : formatNumber(row.linkVisitors), formatMoney(row.spend, true), formatNumber(row.impressions), formatNumber(row.clicks), formatMoney(row.purchaseValue, true), levelPercent(share(row.coCreateSpend, row.spend)), levelPercent(share(row.graphicSpend, row.spend)), levelPercent(share(row.brandAdSpend, row.spend))]));
+    const headers = ["品牌", "类目", "链接简称", "商品ID / ID", "链接GMV", "链接GMV环比", "链接访客", "链接访客环比", "站外花费", "站外花费环比", "曝光", "曝光环比", "点击量", "点击量环比", "成交金额", "成交金额环比", "合创占比", "合创占比变化", "图文占比", "图文占比变化", "品牌广告占比", "品牌广告占比变化"];
+    const exportRows = sorted.map((row) => {
+      const coCreateShare = share(row.coCreateSpend, row.spend);
+      const previousCoCreateShare = share(row.previousCoCreateSpend, row.previousSpend);
+      const graphicShare = share(row.graphicSpend, row.spend);
+      const previousGraphicShare = share(row.previousGraphicSpend, row.previousSpend);
+      const brandAdShare = share(row.brandAdSpend, row.spend);
+      const previousBrandAdShare = share(row.previousBrandAdSpend, row.previousSpend);
+      return [
+        row.brand,
+        row.category || "",
+        row.link,
+        row.id || "",
+        row.linkGmv === null ? "" : formatMoney(row.linkGmv, true),
+        deltaText(row.linkGmv, row.previousLinkGmv),
+        row.linkVisitors === null ? "" : formatNumber(row.linkVisitors),
+        deltaText(row.linkVisitors, row.previousLinkVisitors),
+        formatMoney(row.spend, true),
+        deltaText(row.spend, row.previousSpend),
+        formatNumber(row.impressions),
+        deltaText(row.impressions, row.previousImpressions),
+        formatNumber(row.clicks),
+        deltaText(row.clicks, row.previousClicks),
+        formatMoney(row.purchaseValue, true),
+        deltaText(row.purchaseValue, row.previousPurchaseValue),
+        levelPercent(coCreateShare),
+        deltaText(coCreateShare, previousCoCreateShare, "pp"),
+        levelPercent(graphicShare),
+        deltaText(graphicShare, previousGraphicShare, "pp"),
+        levelPercent(brandAdShare),
+        deltaText(brandAdShare, previousBrandAdShare, "pp"),
+      ];
+    });
+    exportExcel("台湾线上销售分析-站外广告数据", "站外广告数据", headers, exportRows);
   };
-  return <><TableExportButton label="导出 Excel" onClick={exportOffsiteRows} count={sorted.length} /><div className="table-wrap offsite-table"><table><colgroup><col className="offsite-category-col" /><col className="offsite-link-col" /><col className="offsite-metric-col" /><col className="offsite-metric-col" /><col className="offsite-metric-col" /><col className="offsite-metric-col" /><col className="offsite-metric-col" /><col className="offsite-metric-col" /><col className="offsite-share-col" /><col className="offsite-share-col" /><col className="offsite-share-col" /></colgroup><thead><tr className="group-head"><th colSpan={4}>经营数据</th><th colSpan={4}>广告数据</th><th colSpan={3}>消耗占比</th></tr><tr>{columns.map((column) => <SortableHeader key={column.key} label={column.label} active={sort.key === column.key} direction={sort.direction} onClick={() => sortBy(column)} />)}</tr></thead><tbody>{sorted.length === 0 ? <tr><td colSpan={11}>暂无站外广告数据</td></tr> : sorted.map((row) => <tr key={row.key}><td><b>{row.category || "—"}</b><small style={{ color: BRAND_COLORS[row.brand] }}>{row.brand}</small></td><td className="primary-cell"><b title={row.link}>{row.link}</b><small>{row.id || "混合目录"}</small></td><td className="metric-value"><b>{row.linkGmv === null ? "—" : formatMoney(row.linkGmv, true)}</b></td><td className="metric-value"><b>{row.linkVisitors === null ? "—" : formatNumber(row.linkVisitors)}</b></td><td className="metric-value"><b>{formatMoney(row.spend, true)}</b></td><td className="metric-value"><b>{formatNumber(row.impressions)}</b></td><td className="metric-value"><b>{formatNumber(row.clicks)}</b></td><td className="metric-value"><b>{formatMoney(row.purchaseValue, true)}</b></td><td className="metric-value"><b>{levelPercent(share(row.coCreateSpend, row.spend))}</b></td><td className="metric-value"><b>{levelPercent(share(row.graphicSpend, row.spend))}</b></td><td className="metric-value"><b>{levelPercent(share(row.brandAdSpend, row.spend))}</b></td></tr>)}</tbody></table></div></>;
+  return <><TableExportButton label="导出 Excel" onClick={exportOffsiteRows} count={sorted.length} /><div className="table-wrap offsite-table"><table><colgroup><col className="offsite-category-col" /><col className="offsite-link-col" /><col className="offsite-metric-col" /><col className="offsite-metric-col" /><col className="offsite-metric-col" /><col className="offsite-metric-col" /><col className="offsite-metric-col" /><col className="offsite-metric-col" /><col className="offsite-share-col" /><col className="offsite-share-col" /><col className="offsite-share-col" /></colgroup><thead><tr className="group-head"><th colSpan={4}>经营数据</th><th colSpan={4}>广告数据</th><th colSpan={3}>消耗占比</th></tr><tr>{columns.map((column) => <SortableHeader key={column.key} label={column.label} active={sort.key === column.key} direction={sort.direction} onClick={() => sortBy(column)} />)}</tr></thead><tbody>{sorted.length === 0 ? <tr><td colSpan={11}>暂无站外广告数据</td></tr> : sorted.map((row) => {
+    const coCreateShare = share(row.coCreateSpend, row.spend);
+    const previousCoCreateShare = share(row.previousCoCreateSpend, row.previousSpend);
+    const graphicShare = share(row.graphicSpend, row.spend);
+    const previousGraphicShare = share(row.previousGraphicSpend, row.previousSpend);
+    const brandAdShare = share(row.brandAdSpend, row.spend);
+    const previousBrandAdShare = share(row.previousBrandAdSpend, row.previousSpend);
+    return <tr key={row.key}><td><b>{row.category || "—"}</b><small style={{ color: BRAND_COLORS[row.brand] }}>{row.brand}</small></td><td className="primary-cell"><b title={row.link}>{row.link}</b><small>{row.id || "混合目录"}</small></td><MetricCell value={row.linkGmv} previous={row.previousLinkGmv} format={(value) => formatMoney(value, true)} /><MetricCell value={row.linkVisitors} previous={row.previousLinkVisitors} format={formatNumber} /><MetricCell value={row.spend} previous={row.previousSpend} format={(value) => formatMoney(value, true)} /><MetricCell value={row.impressions} previous={row.previousImpressions} format={formatNumber} /><MetricCell value={row.clicks} previous={row.previousClicks} format={formatNumber} /><MetricCell value={row.purchaseValue} previous={row.previousPurchaseValue} format={(value) => formatMoney(value, true)} /><MetricCell value={coCreateShare} previous={previousCoCreateShare} format={levelPercent} mode="pp" /><MetricCell value={graphicShare} previous={previousGraphicShare} format={levelPercent} mode="pp" /><MetricCell value={brandAdShare} previous={previousBrandAdShare} format={levelPercent} mode="pp" /></tr>;
+  })}</tbody></table></div></>;
 }
 
 function channelRollup(rows: ChannelSkuRow[], brand: "ALL" | BrandKey = "ALL", category?: string): ChannelRollupRow {
@@ -1619,12 +1747,12 @@ export function SalesDashboard() {
     let cancelled = false;
     setOffsiteLoading(true);
     setOffsiteError("");
-    loadOffsiteData(currentRange, data, DEFAULT_TWD_TO_CNY)
+    loadOffsiteData(currentRange, previousRange, data, DEFAULT_TWD_TO_CNY)
       .then((result) => { if (!cancelled) setOffsiteRows(result); })
       .catch((reason) => { if (!cancelled) setOffsiteError(reason instanceof Error ? reason.message : "站外广告数据同步失败"); })
       .finally(() => { if (!cancelled) setOffsiteLoading(false); });
     return () => { cancelled = true; };
-  }, [currentRange, refresh, unlocked, page, brand, data]);
+  }, [currentRange, previousRange, refresh, unlocked, page, brand, data]);
 
   const visible = useMemo(() => data.filter((item) => brand === "ALL" || item.config.key === brand), [brand, data]);
   const options = useMemo(() => {
