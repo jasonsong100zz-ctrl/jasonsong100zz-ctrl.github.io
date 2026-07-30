@@ -9,7 +9,7 @@ const PASSWORD_HASH =
 const csvInFlight = new Map<string, Promise<string[][]>>();
 
 type BrandKey = "SKT" | "G2G" | "TP";
-type PageKey = "overview" | "category" | "link" | "ads" | "channels";
+type PageKey = "overview" | "category" | "link" | "offsite" | "ads" | "channels";
 type GvizRow = { c: Array<{ v?: unknown } | null> };
 type MetricRow = {
   key: string;
@@ -136,19 +136,45 @@ type ChannelSpuRow = {
 };
 
 type ChannelData = { rows: ChannelSkuRow[] };
+type OffsiteConfig = { brand: BrandKey; spreadsheetId: string; gid: number; date: string; spend: string; impressions: string; clicks: string; purchaseValue: string; productName: string; category: string; typeColumns: string[] };
+type OffsiteMapRecord = { brand: BrandKey; id: string; link: string; category: string };
+type OffsiteRow = {
+  key: string;
+  brand: BrandKey;
+  id: string;
+  category: string;
+  link: string;
+  linkGmv: number | null;
+  linkVisitors: number | null;
+  spend: number;
+  impressions: number;
+  clicks: number;
+  purchaseValue: number;
+  coCreateSpend: number;
+  graphicSpend: number;
+  brandAdSpend: number;
+};
 const FALLBACK_CATEGORY = "其他/赠品";
 
 const PAGE_LABELS: Array<{ key: PageKey; label: string; note: string; number: string }> = [
   { key: "overview", label: "品牌总览", note: "经营结果与效率", number: "01" },
   { key: "category", label: "品类进度", note: "品类贡献与转化", number: "02" },
   { key: "link", label: "链接明细", note: "商品链接经营", number: "04" },
+  { key: "offsite", label: "站外广告数据", note: "站外投放与链接经营", number: "05" },
   { key: "ads", label: "广告数据", note: "站内投放效率", number: "06" },
   { key: "channels", label: "线上 / 线下 SKU", note: "销量差距与环比", number: "07" },
 ];
 
 const ONLINE_SKU_SHEET_ID = "16hb3YZRtu0jnU0hHeL1SGHirR4lWzItGlW1LQ0zj5GU";
+const OFFSITE_PRODUCT_MAP_SHEET_ID = "1f77vjXSXYPRo531hdNoS_BWdNBqzNwcLW-56TF8IcFw";
+const OFFSITE_PRODUCT_MAP_GID = 1697343653;
 const MAPPING_GID = 1668472749;
 const MAINTAINED_MAPPING_GID = 305051712;
+const OFFSITE_CONFIGS: OffsiteConfig[] = [
+  { brand: "G2G", spreadsheetId: "1ptzr5wSndXdxAG3kCUvIJ9rhTDz5-SYdG0Rd8rFcsYk", gid: 0, date: "D", spend: "E", impressions: "F", clicks: "G", purchaseValue: "I", productName: "AC", category: "AD", typeColumns: ["N", "R", "U", "V", "W", "Y", "Z", "AE", "AF"] },
+  { brand: "SKT", spreadsheetId: "1gt-oypX44RAr2Kis-pdfXfa0k-UbVNeZAg1zIcGwBs4", gid: 702107027, date: "I", spend: "C", impressions: "D", clicks: "E", purchaseValue: "F", productName: "Z", category: "Y", typeColumns: ["O", "R", "X", "Y", "AA"] },
+  { brand: "TP", spreadsheetId: "1ZEvZNIULKovBaGvXC3v6jeIl_l5VDlXWkI4RhLPd7kg", gid: 1346236884, date: "A", spend: "F", impressions: "K", clicks: "L", purchaseValue: "G", productName: "Y", category: "Z", typeColumns: ["O", "R", "U", "X"] },
+];
 
 const BRANDS: BrandConfig[] = [
   {
@@ -311,6 +337,59 @@ function normalizeCategory(value: string) {
 }
 
 type MatchRecord = { id: string; link: string; product: string; category: string };
+
+function normalizeLookupText(value: string) {
+  return normalizeCategory(value)
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/[·・\-—_/｜|（）()［\][\]【】「」"'“”]/g, "");
+}
+
+function indexOffsiteProductMap(rows: string[][]) {
+  const byName = new Map<BrandKey, Map<string, OffsiteMapRecord>>();
+  BRANDS.forEach((item) => byName.set(item.key, new Map()));
+  const blocks = [
+    { brandColumn: "A", idColumn: "B", linkColumn: "C", categoryColumn: "D", aliasColumn: "" },
+    { brandColumn: "F", idColumn: "G", linkColumn: "H", categoryColumn: "I", aliasColumn: "" },
+    { brandColumn: "K", idColumn: "L", linkColumn: "M", categoryColumn: "N", aliasColumn: "O" },
+  ];
+  const put = (brand: BrandKey, name: string, record: OffsiteMapRecord) => {
+    const normalized = normalizeLookupText(name);
+    if (normalized) byName.get(brand)?.set(normalized, record);
+  };
+  rows.slice(1).forEach((row) => {
+    blocks.forEach((block) => {
+      const brand = brandFromValue(csvStringAt(row, block.brandColumn));
+      const id = normalizeId(csvStringAt(row, block.idColumn));
+      const link = csvStringAt(row, block.linkColumn);
+      if (!brand || !link || id === "未填写") return;
+      const record = { brand, id, link, category: normalizeCategory(csvStringAt(row, block.categoryColumn) || FALLBACK_CATEGORY) };
+      put(brand, link, record);
+      if (block.aliasColumn) put(brand, csvStringAt(row, block.aliasColumn), record);
+    });
+  });
+  return byName;
+}
+
+function findOffsiteMapRecord(map: Map<BrandKey, Map<string, OffsiteMapRecord>>, brand: BrandKey, name: string) {
+  const normalized = normalizeLookupText(name);
+  const brandMap = map.get(brand);
+  if (!normalized || !brandMap) return null;
+  const exact = brandMap.get(normalized);
+  if (exact) return exact;
+  for (const [key, value] of brandMap.entries()) {
+    if (key.length >= 3 && (normalized.includes(key) || key.includes(normalized))) return value;
+  }
+  return null;
+}
+
+function classifyOffsiteSpend(row: string[], config: OffsiteConfig) {
+  const text = config.typeColumns.map((column) => csvStringAt(row, column)).join(" ");
+  if (/品牌/.test(text)) return "brand";
+  if (/图文|圖文/.test(text)) return "graphic";
+  if (/合创|合創|kol/i.test(text)) return "coCreate";
+  return "graphic";
+}
 
 function addMetric(target: MetricRow, source: MetricRow) {
   const keys = ["gmv", "previousGmv", "orders", "previousOrders", "exposure", "previousExposure", "clicks", "previousClicks", "visitors", "previousVisitors", "search", "previousSearch", "cart", "previousCart", "units", "previousUnits", "adGmv", "previousAdGmv", "adSpend", "previousAdSpend", "adExposure", "previousAdExposure", "adClicks", "previousAdClicks", "conversions", "previousConversions"] as const;
@@ -772,6 +851,67 @@ async function loadBrand(config: BrandConfig, period: DateRange, previousPeriod:
   } satisfies BrandData;
 }
 
+async function loadOffsiteData(period: DateRange, brands: BrandData[], exchangeRate = DEFAULT_TWD_TO_CNY) {
+  const [productMapRows, ...sourceRows] = await Promise.all([
+    loadSheetCsv(OFFSITE_PRODUCT_MAP_GID, OFFSITE_PRODUCT_MAP_SHEET_ID),
+    ...OFFSITE_CONFIGS.map((config) => loadSheetCsv(config.gid, config.spreadsheetId)),
+  ]);
+  const productMap = indexOffsiteProductMap(productMapRows);
+  const linkById = new Map<string, MetricRow>();
+  const linkByName = new Map<string, MetricRow>();
+  brands.forEach((brandData) => {
+    brandData.links.forEach((link) => {
+      if (link.id) linkById.set(`${link.brand}:${normalizeId(link.id)}`, link);
+      const names = [link.link, link.product].filter(Boolean);
+      names.forEach((name) => linkByName.set(`${link.brand}:${normalizeLookupText(name)}`, link));
+    });
+  });
+  const groups = new Map<string, OffsiteRow>();
+  OFFSITE_CONFIGS.forEach((config, configIndex) => {
+    csvRowsInRange(sourceRows[configIndex], config.date, period.start, period.end).forEach((row, rowIndex) => {
+      const sourceName = csvStringAt(row, config.productName) || csvStringAt(row, config.category) || "未填写";
+      const isMixed = /混合目录|混合目錄/i.test(sourceName);
+      const mapped = isMixed ? null : findOffsiteMapRecord(productMap, config.brand, sourceName);
+      const id = mapped?.id || "";
+      const linkFromSales = id ? linkById.get(`${config.brand}:${id}`) : linkByName.get(`${config.brand}:${normalizeLookupText(sourceName)}`);
+      const link = isMixed ? "混合目录" : mapped?.link || linkFromSales?.product || sourceName;
+      const category = isMixed ? "" : mapped?.category || linkFromSales?.category || normalizeCategory(csvStringAt(row, config.category) || FALLBACK_CATEGORY);
+      const key = `${config.brand}:${isMixed ? "mixed" : id || normalizeLookupText(link) || rowIndex}`;
+      const spend = csvNumberAt(row, config.spend) * exchangeRate;
+      const type = classifyOffsiteSpend(row, config);
+      const existing = groups.get(key) || {
+        key,
+        brand: config.brand,
+        id,
+        category,
+        link,
+        linkGmv: isMixed ? null : linkFromSales?.gmv ?? null,
+        linkVisitors: isMixed ? null : linkFromSales?.visitors ?? null,
+        spend: 0,
+        impressions: 0,
+        clicks: 0,
+        purchaseValue: 0,
+        coCreateSpend: 0,
+        graphicSpend: 0,
+        brandAdSpend: 0,
+      };
+      existing.spend += spend;
+      existing.impressions += csvNumberAt(row, config.impressions);
+      existing.clicks += csvNumberAt(row, config.clicks);
+      existing.purchaseValue += csvNumberAt(row, config.purchaseValue) * exchangeRate;
+      if (type === "brand") existing.brandAdSpend += spend;
+      else if (type === "coCreate") existing.coCreateSpend += spend;
+      else existing.graphicSpend += spend;
+      if (!existing.id && id) existing.id = id;
+      if (!existing.category && category) existing.category = category;
+      if (!existing.linkGmv && !isMixed && linkFromSales) existing.linkGmv = linkFromSales.gmv;
+      if (!existing.linkVisitors && !isMixed && linkFromSales) existing.linkVisitors = linkFromSales.visitors;
+      groups.set(key, existing);
+    });
+  });
+  return [...groups.values()].sort((left, right) => right.spend - left.spend);
+}
+
 function brandFromValue(value: string): BrandKey | null {
   const normalized = value.toUpperCase();
   if (normalized.includes("SKT") || normalized.includes("SKINTIFIC")) return "SKT";
@@ -1142,6 +1282,34 @@ function Table({ rows, type }: { rows: MetricRow[]; type: "category" | "link" | 
   })}</tbody></table></div></>;
 }
 
+function OffsiteTable({ rows }: { rows: OffsiteRow[] }) {
+  const [sort, setSort] = useState<SortState>({ key: "spend", direction: "desc" });
+  const columns: SortColumn<OffsiteRow>[] = [
+    { key: "category", label: "类目", value: (row) => row.category, defaultDirection: "asc" },
+    { key: "link", label: "链接简称", value: (row) => row.link, defaultDirection: "asc" },
+    { key: "linkGmv", label: "链接GMV", value: (row) => row.linkGmv },
+    { key: "linkVisitors", label: "链接访客", value: (row) => row.linkVisitors },
+    { key: "spend", label: "站外花费", value: (row) => row.spend },
+    { key: "impressions", label: "曝光", value: (row) => row.impressions },
+    { key: "clicks", label: "点击量", value: (row) => row.clicks },
+    { key: "purchaseValue", label: "成交金额", value: (row) => row.purchaseValue },
+    { key: "coCreate", label: "合创", value: (row) => row.spend > 0 ? row.coCreateSpend / row.spend : null },
+    { key: "graphic", label: "图文", value: (row) => row.spend > 0 ? row.graphicSpend / row.spend : null },
+    { key: "brandAd", label: "品牌广告", value: (row) => row.spend > 0 ? row.brandAdSpend / row.spend : null },
+  ];
+  const sortColumn = columns.find((column) => column.key === sort.key) || columns[4];
+  const sorted = [...rows].sort((a, b) => {
+    const result = compareSortValue(sortColumn.value(a), sortColumn.value(b));
+    return sort.direction === "asc" ? result : -result;
+  });
+  const sortBy = (column: SortColumn<OffsiteRow>) => setSort((current) => current.key === column.key ? { key: column.key, direction: current.direction === "asc" ? "desc" : "asc" } : { key: column.key, direction: column.defaultDirection || "desc" });
+  const share = (part: number, total: number) => total > 0 ? part / total : null;
+  const exportOffsiteRows = () => {
+    exportExcel("台湾线上销售分析-站外广告数据", "站外广告数据", ["品牌", "类目", "链接简称", "商品ID / ID", "链接GMV", "链接访客", "站外花费", "曝光", "点击量", "成交金额", "合创占比", "图文占比", "品牌广告占比"], sorted.map((row) => [row.brand, row.category || "", row.link, row.id || "", row.linkGmv === null ? "" : formatMoney(row.linkGmv, true), row.linkVisitors === null ? "" : formatNumber(row.linkVisitors), formatMoney(row.spend, true), formatNumber(row.impressions), formatNumber(row.clicks), formatMoney(row.purchaseValue, true), levelPercent(share(row.coCreateSpend, row.spend)), levelPercent(share(row.graphicSpend, row.spend)), levelPercent(share(row.brandAdSpend, row.spend))]));
+  };
+  return <><TableExportButton label="导出 Excel" onClick={exportOffsiteRows} count={sorted.length} /><div className="table-wrap offsite-table"><table><colgroup><col className="offsite-category-col" /><col className="offsite-link-col" /><col className="offsite-metric-col" /><col className="offsite-metric-col" /><col className="offsite-metric-col" /><col className="offsite-metric-col" /><col className="offsite-metric-col" /><col className="offsite-metric-col" /><col className="offsite-share-col" /><col className="offsite-share-col" /><col className="offsite-share-col" /></colgroup><thead><tr className="group-head"><th colSpan={4}>经营数据</th><th colSpan={4}>广告数据</th><th colSpan={3}>消耗占比</th></tr><tr>{columns.map((column) => <SortableHeader key={column.key} label={column.label} active={sort.key === column.key} direction={sort.direction} onClick={() => sortBy(column)} />)}</tr></thead><tbody>{sorted.length === 0 ? <tr><td colSpan={11}>暂无站外广告数据</td></tr> : sorted.map((row) => <tr key={row.key}><td><b>{row.category || "—"}</b><small style={{ color: BRAND_COLORS[row.brand] }}>{row.brand}</small></td><td className="primary-cell"><b title={row.link}>{row.link}</b><small>{row.id || "混合目录"}</small></td><td className="metric-value"><b>{row.linkGmv === null ? "—" : formatMoney(row.linkGmv, true)}</b></td><td className="metric-value"><b>{row.linkVisitors === null ? "—" : formatNumber(row.linkVisitors)}</b></td><td className="metric-value"><b>{formatMoney(row.spend, true)}</b></td><td className="metric-value"><b>{formatNumber(row.impressions)}</b></td><td className="metric-value"><b>{formatNumber(row.clicks)}</b></td><td className="metric-value"><b>{formatMoney(row.purchaseValue, true)}</b></td><td className="metric-value"><b>{levelPercent(share(row.coCreateSpend, row.spend))}</b></td><td className="metric-value"><b>{levelPercent(share(row.graphicSpend, row.spend))}</b></td><td className="metric-value"><b>{levelPercent(share(row.brandAdSpend, row.spend))}</b></td></tr>)}</tbody></table></div></>;
+}
+
 function channelRollup(rows: ChannelSkuRow[], brand: "ALL" | BrandKey = "ALL", category?: string): ChannelRollupRow {
   return rows
     .filter((row) => (brand === "ALL" || row.brand === brand) && (!category || row.category === category))
@@ -1339,6 +1507,9 @@ export function SalesDashboard() {
   const [channelData, setChannelData] = useState<ChannelData>({ rows: [] });
   const [channelLoading, setChannelLoading] = useState(false);
   const [channelError, setChannelError] = useState("");
+  const [offsiteRows, setOffsiteRows] = useState<OffsiteRow[]>([]);
+  const [offsiteLoading, setOffsiteLoading] = useState(false);
+  const [offsiteError, setOffsiteError] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [refresh, setRefresh] = useState(0);
@@ -1368,6 +1539,18 @@ export function SalesDashboard() {
     return () => { cancelled = true; };
   }, [currentRange, previousRange, refresh, unlocked, page]);
 
+  useEffect(() => {
+    if (!unlocked || data.length === 0 || (page !== "offsite" && !(page === "overview" && brand !== "ALL"))) return;
+    let cancelled = false;
+    setOffsiteLoading(true);
+    setOffsiteError("");
+    loadOffsiteData(currentRange, data, DEFAULT_TWD_TO_CNY)
+      .then((result) => { if (!cancelled) setOffsiteRows(result); })
+      .catch((reason) => { if (!cancelled) setOffsiteError(reason instanceof Error ? reason.message : "站外广告数据同步失败"); })
+      .finally(() => { if (!cancelled) setOffsiteLoading(false); });
+    return () => { cancelled = true; };
+  }, [currentRange, refresh, unlocked, page, brand, data]);
+
   const visible = useMemo(() => data.filter((item) => brand === "ALL" || item.config.key === brand), [brand, data]);
   const options = useMemo(() => {
     const rows = visible.flatMap((item) => [...item.category, ...item.links]);
@@ -1377,6 +1560,7 @@ export function SalesDashboard() {
   }, [visible]);
   const matches = (row: MetricRow) => (!productId || `${row.id} ${row.link}`.toLowerCase().includes(productId.toLowerCase())) && (!product || `${row.product} ${row.link}`.toLowerCase().includes(product.toLowerCase())) && (!category || row.category === category);
   const rowsFor = (type: "category" | "link" | "ads") => visible.flatMap((item) => (type === "category" ? item.category : type === "link" ? item.links : item.ads).filter(matches));
+  const filteredOffsiteRows = useMemo(() => offsiteRows.filter((row) => (brand === "ALL" || row.brand === brand) && (!productId || `${row.id} ${row.link}`.toLowerCase().includes(productId.toLowerCase())) && (!product || row.link.toLowerCase().includes(product.toLowerCase())) && (!category || row.category === category)), [offsiteRows, brand, productId, product, category]);
   const total = visible.reduce((acc, item) => ({
     gmv: acc.gmv + item.actualGmv,
     previous: acc.previous + item.previousActualGmv,
@@ -1416,8 +1600,9 @@ export function SalesDashboard() {
     <div className="dashboard-layout"><aside className="side-nav"><div className="side-brand"><span>TW / SP</span><b>品牌分析室</b></div><p className="side-label">看板入口</p><button className={brand === "ALL" && page === "overview" ? "active" : ""} onClick={() => { setBrand("ALL"); setPage("overview"); }}><strong>总览</strong><small>三品牌经营总览</small></button>{BRANDS.map((item) => <button key={item.key} style={{ "--brand-color": BRAND_COLORS[item.key] } as React.CSSProperties} className={brand === item.key && page === "overview" ? "active" : ""} onClick={() => { setBrand(item.key); setPage("overview"); }}><strong>{item.key}</strong><small>{item.name}</small></button>)}<div className="side-divider" /><button className={page === "channels" ? "active" : ""} onClick={() => { setBrand("ALL"); setPage("channels"); }}><strong>线上 / 线下 SKU</strong><small>销量环比与差距</small></button></aside><div className="dashboard-content">
     <header className="topbar"><div><p className="eyebrow">SALES & COST EFFICIENCY</p><h1>台湾线上销售分析</h1><p className="subtitle">聚焦费用投入对 GMV 的影响 · SKT / G2G / TP · {rangeLabel(currentRange)} 对比 {rangeLabel(previousRange)}</p></div><button className="primary-button" onClick={() => setRefresh((value) => value + 1)}>＋ 更新销售数据</button></header>
     <section className="filter-bar"><div><label>品牌</label><select value={brand} onChange={(event) => setBrand(event.target.value as "ALL" | BrandKey)}><option value="ALL">全部品牌</option>{BRANDS.map((item) => <option value={item.key} key={item.key}>{item.key} · {item.name}</option>)}</select></div><div><label>主日期从</label><input type="date" value={currentRange.start} onChange={(event) => setCurrentRange((value) => ({ ...value, start: event.target.value }))} /></div><div><label>主日期到</label><input type="date" value={currentRange.end} onChange={(event) => setCurrentRange((value) => ({ ...value, end: event.target.value }))} /></div><div><label>环比日期从</label><input type="date" value={previousRange.start} onChange={(event) => setPreviousRange((value) => ({ ...value, start: event.target.value }))} /></div><div><label>环比日期到</label><input type="date" value={previousRange.end} onChange={(event) => setPreviousRange((value) => ({ ...value, end: event.target.value }))} /></div><div><label>商品ID / ID</label><input value={productId} onChange={(event) => setProductId(event.target.value)} placeholder="输入商品ID / ID" /></div><div><label>产品名</label><input value={product} onChange={(event) => setProduct(event.target.value)} placeholder="搜索产品名" /></div><div><label>品类</label><select value={category} onChange={(event) => setCategory(event.target.value)}><option value="">全部品类</option>{options.categories.map((item) => <option key={item}>{item}</option>)}</select></div><button className="reset-button" onClick={resetFilters}>重置筛选</button></section>
-    <nav className="page-tabs">{PAGE_LABELS.map((item) => <button key={item.key} className={page === item.key ? "active" : ""} onClick={() => setPage(item.key)}><b>{item.number}</b><span>{item.label}</span><small>{item.note}</small></button>)}<span className="sync-state"><i className={error ? "error-dot" : ""} />{loading ? "同步中" : "数据已同步"}</span></nav>
+    <nav className="page-tabs">{PAGE_LABELS.map((item) => <button key={item.key} className={page === item.key ? "active" : ""} onClick={() => setPage(item.key)}><b>{item.number}</b><span>{item.label}</span><small>{item.note}</small></button>)}<span className="sync-state"><i className={error || offsiteError ? "error-dot" : ""} />{loading || offsiteLoading ? "同步中" : "数据已同步"}</span></nav>
     {error && <div className="data-alert"><b>数据同步失败</b><span>{error}</span><button onClick={() => setRefresh((value) => value + 1)}>重新同步</button></div>}
+    {offsiteError && <div className="data-alert"><b>站外广告数据同步失败</b><span>{offsiteError}</span><button onClick={() => setRefresh((value) => value + 1)}>重新同步</button></div>}
     {page === "channels" ? <><ChannelSummary rows={channelData.rows} /><section className="data-page channel-page"><div className="section-title"><span>07</span><div><h2>线上 / 线下 SKU 销量对比</h2><p>线上数据来自台湾线上 SKU 销量表；线下汇总三品牌各通路原始 SKU 销量；07 独立按 SKU 匹配到 SPU 与品类，不影响链接明细和品类进度。</p></div><em>{channelLoading ? "同步中" : `${channelData.rows.length} 个SKU`}</em></div>{channelError && <div className="data-alert"><b>销量数据同步失败</b><span>{channelError}</span></div>}{channelLoading && channelData.rows.length === 0 ? <div className="loading-state"><span className="loading-mark" /><div><strong>正在同步线上与线下 SKU 销量</strong><p>按主日期范围和环比日期范围汇总 SKU，再映射到 SPU</p></div></div> : <><div className="channel-subsection"><div><h3>品类销量对比</h3><p>先看各品牌品类层级的线上、线下差距与倍数。</p></div></div><ChannelCategoryTable rows={channelData.rows} brand={brand} /><div className="channel-subsection sku-subsection"><div><h3>SPU 销量明细</h3><p>默认按 SPU 汇总；展开后查看 SKU 码和 SKU 名。</p></div></div><ChannelSpuTable rows={channelData.rows} brand={brand} /></>}</section></> : loading && data.length === 0 ? <div className="loading-state"><span className="loading-mark" /><div><strong>正在同步销售与广告数据</strong><p>读取三品牌的店铺、链接、商品ID和广告明细</p></div></div> : <>
       {page === "overview" && <>
         <section className="metric-grid"><MetricCard label="累计 GMV" value={formatMoney(total.gmv, true)} delta={ratio(total.gmv, total.previous)} note={`DMS折后实收 · 环比区间 ${formatMoney(total.previous, true)}`} color="#2364d8" /><MetricCard label="目标 GMV 达成" value={levelPercent(total.goal > 0 ? total.gmv / total.goal : null)} delta={total.goal > 0 ? (total.gmv - total.previous) / total.goal : null} deltaMode="pp" note={`目标 ${formatMoney(total.goal, true)}`} color="#ff766b" /><MetricCard label="综合费比" value={levelPercent(total.gmv > 0 ? total.adSpend / total.gmv : null)} delta={(total.gmv > 0 && total.previous > 0) ? total.adSpend / total.gmv - total.previousAdSpend / total.previous : null} deltaMode="pp" note="站内花费 / DMS GMV" color="#1ba89c" /><MetricCard label="综合 ROI" value={rate(totalRoi)} delta={ratio(totalRoi, previousTotalRoi || 0)} note={`DMS GMV / 站内花费`} color="#8d7bd8" /></section>
@@ -1428,10 +1613,12 @@ export function SalesDashboard() {
         {brand !== "ALL" && <>
           <section className="data-page"><div className="section-title"><span>02</span><div><h2>{brand} · 品类进度</h2><p>通过匹配表的商品ID补齐产品与类目。</p></div><em>{rowsFor("category").length} 条明细</em></div><Table rows={rowsFor("category")} type="category" /></section>
           <section className="data-page"><div className="section-title"><span>04</span><div><h2>{brand} · 链接明细</h2><p>以商品ID / ID为关联主键。</p></div><em>{rowsFor("link").length} 条明细</em></div><Table rows={rowsFor("link")} type="link" /></section>
+          <section className="data-page"><div className="section-title"><span>05</span><div><h2>{brand} · 站外广告数据</h2><p>按电商产品名匹配链接简称，再以商品ID回填链接经营数据；混合目录仅保留广告数据。</p></div><em>{offsiteLoading ? "同步中" : `${filteredOffsiteRows.length} 条明细`}</em></div>{offsiteLoading && offsiteRows.length === 0 ? <div className="loading-state"><span className="loading-mark" /><div><strong>正在同步站外广告数据</strong><p>读取站外投放表和产品 map</p></div></div> : <OffsiteTable rows={filteredOffsiteRows} />}</section>
           <section className="data-page"><div className="section-title"><span>06</span><div><h2>{brand} · 广告数据</h2><p>站内花费、广告GMV与投放效率。</p></div><em>{rowsFor("ads").length} 条明细</em></div><Table rows={rowsFor("ads")} type="ads" /></section>
         </>}
       </>}
-      {page !== "overview" && page !== "channels" && <section className="data-page"><div className="section-title"><span>{currentPage.number}</span><div><h2>{currentPage.label}</h2><p>{currentPage.note} · 已应用品牌、日期范围、商品ID、产品名和品类筛选。</p></div><em>{visible.reduce((sum, item) => sum + (page === "category" ? item.category.length : page === "link" ? item.links.length : item.ads.length), 0)} 条明细</em></div><Table rows={rowsFor(page)} type={page} /></section>}
+      {page === "offsite" && <section className="data-page"><div className="section-title"><span>05</span><div><h2>站外广告数据</h2><p>经营数据按商品ID / ID回填现有链接明细；广告数据来自三品牌站外投放源表。</p></div><em>{offsiteLoading ? "同步中" : `${filteredOffsiteRows.length} 条明细`}</em></div>{offsiteLoading && offsiteRows.length === 0 ? <div className="loading-state"><span className="loading-mark" /><div><strong>正在同步站外广告数据</strong><p>读取站外投放表和产品 map</p></div></div> : <OffsiteTable rows={filteredOffsiteRows} />}</section>}
+      {page !== "overview" && page !== "channels" && page !== "offsite" && <section className="data-page"><div className="section-title"><span>{currentPage.number}</span><div><h2>{currentPage.label}</h2><p>{currentPage.note} · 已应用品牌、日期范围、商品ID、产品名和品类筛选。</p></div><em>{visible.reduce((sum, item) => sum + (page === "category" ? item.category.length : page === "link" ? item.links.length : item.ads.length), 0)} 条明细</em></div><Table rows={rowsFor(page)} type={page} /></section>}
     </>}
     <footer><span>数据源：台湾 SP 三品牌数据表</span><span>站外投放字段预留 · 站内广告 ROI = 广告归因 GMV / 站内花费</span></footer>
     </div></div>

@@ -217,6 +217,23 @@ td.metric-value small { font-size: 9px; }
 .ads-table .secondary-col { width: 7em; }
 .category-table table { min-width: 1120px; }
 .category-table .primary-col { width: 10em; }
+.offsite-table { max-height: 720px; overflow: auto; }
+.offsite-table table { min-width: 1180px; table-layout: fixed; }
+.offsite-table thead th { position: sticky; z-index: 5; box-shadow: 0 1px 0 var(--line); }
+.offsite-table thead .group-head th { top: 0; height: 34px; background: #eef4fb; color: var(--ink); text-align: center; }
+.offsite-table thead tr:nth-child(2) th { top: 34px; }
+.offsite-table th,
+.offsite-table td { padding: 8px 8px; }
+.offsite-table th .sort-button { white-space: normal; line-height: 1.15; }
+.offsite-table td:first-child { min-width: 0; }
+.offsite-table td b { font-size: 10.5px; line-height: 1.2; }
+.offsite-table td small { margin-top: 3px; font-size: 8.5px; }
+.offsite-table .primary-cell b,
+.offsite-table .primary-cell small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.offsite-category-col { width: 9%; }
+.offsite-link-col { width: 15%; }
+.offsite-metric-col { width: 9.5%; }
+.offsite-share-col { width: 9%; }
 .channel-summary-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 0 0 16px; }
 .channel-summary-card { padding: 14px 15px 13px; border: 1px solid color-mix(in srgb, var(--brand-color) 28%, var(--line)); border-radius: 12px; background: #fff; box-shadow: 0 6px 18px color-mix(in srgb, var(--brand-color) 10%, transparent); }
 .channel-summary-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 11px; color: var(--brand-color); }
