@@ -29,7 +29,7 @@ function sql() {
 CREATE TEMP FUNCTION norm_text(value STRING) AS (
   LOWER(REGEXP_REPLACE(
     TRANSLATE(COALESCE(value, ''), '氣墊體華復護膚潔顏兩組噴霧潤妝膠銀質煙醫麗亞鎖鍊鏈', '气垫体华复护肤洁颜两组喷雾润妆胶银质烟医丽亚锁链链'),
-    r'[^[:alnum:]\p{Han}]+',
+    r'[^0-9a-zA-Z一-龥]+',
     ''
   ))
 );
@@ -245,7 +245,7 @@ function debugSql() {
 CREATE TEMP FUNCTION norm_text(value STRING) AS (
   LOWER(REGEXP_REPLACE(
     TRANSLATE(COALESCE(value, ''), '氣墊體華復護膚潔顏兩組噴霧潤妝膠銀質煙醫麗亞鎖鍊鏈', '气垫体华复护肤洁颜两组喷雾润妆胶银质烟医丽亚锁链链'),
-    r'[^[:alnum:]\p{Han}]+',
+    r'[^0-9a-zA-Z一-龥]+',
     ''
   ))
 );
