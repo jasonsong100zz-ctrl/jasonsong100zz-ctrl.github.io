@@ -26,6 +26,14 @@ function isIsoDate(value) {
 
 function sql() {
   return `
+CREATE TEMP FUNCTION norm_text(value STRING) AS (
+  LOWER(REGEXP_REPLACE(
+    TRANSLATE(COALESCE(value, ''), '氣墊體華復護膚潔顏兩組噴霧潤妝膠銀質煙醫麗亞鎖鍊鏈', '气垫体华复护肤洁颜两组喷雾润妆胶银质烟医丽亚锁链链'),
+    r'[^[:alnum:]\p{Han}]+',
+    ''
+  ))
+);
+
 WITH product_map_unified AS (
   SELECT
     'G2G' AS brand,
@@ -63,9 +71,9 @@ map_dedup AS (
       link_name,
       category,
       fb_product,
-      LOWER(REGEXP_REPLACE(COALESCE(NULLIF(fb_product, ''), link_name), r'[^[:alnum:]\p{Han}]+', '')) AS map_key,
+      norm_text(COALESCE(NULLIF(fb_product, ''), link_name)) AS map_key,
       ROW_NUMBER() OVER (
-        PARTITION BY brand, LOWER(REGEXP_REPLACE(COALESCE(NULLIF(fb_product, ''), link_name), r'[^[:alnum:]\p{Han}]+', ''))
+        PARTITION BY brand, norm_text(COALESCE(NULLIF(fb_product, ''), link_name))
         ORDER BY IF(NULLIF(link_id, '') IS NULL, 1, 0), link_name
       ) AS row_number
     FROM product_map_unified
@@ -126,7 +134,7 @@ ads_normalized AS (
   SELECT
     *,
     GENERATE_UUID() AS ad_row_id,
-    LOWER(REGEXP_REPLACE(COALESCE(source_link_name, ''), r'[^[:alnum:]\p{Han}]+', '')) AS join_key
+    norm_text(source_link_name) AS join_key
   FROM ads
   WHERE date BETWEEN DATE(@start) AND DATE(@end)
     AND (@brand = '' OR brand = @brand)
