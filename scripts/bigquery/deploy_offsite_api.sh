@@ -5,6 +5,7 @@ PROJECT_ID="${PROJECT_ID:-id-g2g}"
 DATASET="${DATASET:-tw}"
 REGION="${REGION:-asia-east1}"
 SERVICE="${SERVICE:-tw-offsite-api}"
+OFFSITE_USD_TO_CNY="${OFFSITE_USD_TO_CNY:-7.2}"
 REPO_URL="${REPO_URL:-https://github.com/jasonsong100zz-ctrl/jasonsong100zz-ctrl.github.io.git}"
 WORKDIR="/tmp/tw-dashboard-api-deploy"
 
@@ -38,7 +39,7 @@ gcloud run deploy "${SERVICE}" \
   --region="${REGION}" \
   --source="${WORKDIR}/api/offsite" \
   --allow-unauthenticated \
-  --set-env-vars="GCP_PROJECT=${PROJECT_ID},BQ_DATASET=${DATASET},TWD_TO_CNY=0.21,ALLOWED_ORIGIN=*" \
+  --set-env-vars="GCP_PROJECT=${PROJECT_ID},BQ_DATASET=${DATASET},OFFSITE_USD_TO_CNY=${OFFSITE_USD_TO_CNY},ALLOWED_ORIGIN=*" \
   --quiet
 
 API_URL="$(gcloud run services describe "${SERVICE}" --project="${PROJECT_ID}" --region="${REGION}" --format='value(status.url)')"

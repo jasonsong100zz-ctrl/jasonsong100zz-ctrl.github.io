@@ -4,7 +4,7 @@ import { BigQuery } from "@google-cloud/bigquery";
 
 const PROJECT_ID = process.env.GCP_PROJECT || process.env.GOOGLE_CLOUD_PROJECT || "id-g2g";
 const DATASET = process.env.BQ_DATASET || "tw";
-const TWD_TO_CNY = Number(process.env.TWD_TO_CNY || "0.21");
+const OFFSITE_USD_TO_CNY = Number(process.env.OFFSITE_USD_TO_CNY || "7.2");
 const PORT = Number(process.env.PORT || "8080");
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "*";
 
@@ -322,12 +322,14 @@ app.get("/offsite", async (request, response) => {
         start,
         end,
         brand,
-        rate: TWD_TO_CNY,
+        rate: OFFSITE_USD_TO_CNY,
       },
     });
     response.json({
       updatedAt: new Date().toISOString(),
       currency: "CNY",
+      sourceCurrency: "USD",
+      exchangeRate: OFFSITE_USD_TO_CNY,
       rows,
     });
   } catch (error) {
