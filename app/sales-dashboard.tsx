@@ -1185,7 +1185,7 @@ function channelBrandItems(brand: "ALL" | BrandKey) {
 }
 
 function ChannelCategoryTable({ rows, brand }: { rows: ChannelSkuRow[]; brand: "ALL" | BrandKey }) {
-  return <div className="channel-brand-tables">{channelBrandItems(brand).map((item) => {
+  return <div className={`channel-brand-tables category-brand-tables${brand === "ALL" ? "" : " single-brand-table"}`}>{channelBrandItems(brand).map((item) => {
     const brandRows = rows.filter((row) => row.brand === item.key);
     return <article className="channel-brand-block" style={{ "--brand-color": BRAND_COLORS[item.key] } as React.CSSProperties} key={item.key}>
       <div className="channel-brand-head"><div><b>{item.key}</b><span>{item.name}</span></div><em>{brandRows.length} SKU</em></div>
