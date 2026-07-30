@@ -28,7 +28,7 @@ function sql() {
   return `
 WITH product_map_unified AS (
   SELECT
-    UPPER(TRIM(g2g_brand)) AS brand,
+    'G2G' AS brand,
     TRIM(g2g_id) AS link_id,
     TRIM(g2g_link_name) AS link_name,
     TRIM(g2g_category) AS category,
@@ -37,22 +37,22 @@ WITH product_map_unified AS (
   WHERE NULLIF(TRIM(g2g_id), '') IS NOT NULL OR NULLIF(TRIM(g2g_link_name), '') IS NOT NULL
   UNION ALL
   SELECT
-    UPPER(TRIM(skt_brand)) AS brand,
+    'SKT' AS brand,
     TRIM(skt_id) AS link_id,
     TRIM(skt_link_name) AS link_name,
     TRIM(skt_category) AS category,
-    TRIM(skt_link_name) AS fb_product
+    COALESCE(NULLIF(TRIM(skt_fb_product), ''), TRIM(skt_link_name)) AS fb_product
   FROM ${TABLES.map}
   WHERE NULLIF(TRIM(skt_id), '') IS NOT NULL OR NULLIF(TRIM(skt_link_name), '') IS NOT NULL
   UNION ALL
   SELECT
-    UPPER(TRIM(tp_brand)) AS brand,
+    'TP' AS brand,
     TRIM(tp_id) AS link_id,
     TRIM(tp_link_name) AS link_name,
     TRIM(tp_category) AS category,
-    TRIM(tp_fb_product) AS fb_product
+    TRIM(tp_link_name) AS fb_product
   FROM ${TABLES.map}
-  WHERE NULLIF(TRIM(tp_id), '') IS NOT NULL OR NULLIF(TRIM(tp_link_name), '') IS NOT NULL OR NULLIF(TRIM(tp_fb_product), '') IS NOT NULL
+  WHERE NULLIF(TRIM(tp_id), '') IS NOT NULL OR NULLIF(TRIM(tp_link_name), '') IS NOT NULL
 ),
 map_dedup AS (
   SELECT * EXCEPT(row_number)
@@ -75,23 +75,23 @@ map_dedup AS (
 ads AS (
   SELECT
     'G2G' AS brand,
-    SAFE.PARSE_DATE('%Y-%m-%d', single_day) AS date,
+    COALESCE(SAFE.PARSE_DATE('%Y-%m-%d', TRIM(single_day)), SAFE.PARSE_DATE('%Y/%m/%d', TRIM(single_day)), SAFE.PARSE_DATE('%d/%m/%Y', TRIM(single_day))) AS date,
     TRIM(ecommerce_product_name) AS source_link_name,
-    TRIM(category) AS source_category,
+    TRIM(ecommerce_category) AS source_category,
     SAFE_CAST(REGEXP_REPLACE(spend, r'[^0-9.-]', '') AS FLOAT64) * @rate AS offsite_spend,
     SAFE_CAST(REGEXP_REPLACE(impressions, r'[^0-9.-]', '') AS FLOAT64) AS impressions,
     SAFE_CAST(REGEXP_REPLACE(clicks, r'[^0-9.-]', '') AS FLOAT64) AS clicks,
     SAFE_CAST(REGEXP_REPLACE(purchase_value, r'[^0-9.-]', '') AS FLOAT64) * @rate AS purchase_value,
     CASE
-      WHEN REGEXP_CONTAINS(CONCAT(IFNULL(objective, ''), ' ', IFNULL(level, ''), ' ', IFNULL(attribution_setting, ''), ' ', IFNULL(outcome, ''), ' ', IFNULL(campaign_name, ''), ' ', IFNULL(ad_name, ''), ' ', IFNULL(ecommerce_product_name, ''), ' ', IFNULL(category, ''), ' ', IFNULL(cost_type, '')), r'品牌') THEN '品牌广告'
-      WHEN REGEXP_CONTAINS(CONCAT(IFNULL(objective, ''), ' ', IFNULL(level, ''), ' ', IFNULL(attribution_setting, ''), ' ', IFNULL(outcome, ''), ' ', IFNULL(campaign_name, ''), ' ', IFNULL(ad_name, ''), ' ', IFNULL(ecommerce_product_name, ''), ' ', IFNULL(category, ''), ' ', IFNULL(cost_type, '')), r'合创|合創|KOL|kol') THEN '合创'
+      WHEN REGEXP_CONTAINS(CONCAT(IFNULL(ad_goal, ''), ' ', IFNULL(ad_type, ''), ' ', IFNULL(campaign_name, ''), ' ', IFNULL(ad_name, ''), ' ', IFNULL(ecommerce_product_name, ''), ' ', IFNULL(ecommerce_category, ''), ' ', IFNULL(material_type, ''), ' ', IFNULL(is_brand_budget, '')), r'品牌') THEN '品牌广告'
+      WHEN REGEXP_CONTAINS(CONCAT(IFNULL(ad_goal, ''), ' ', IFNULL(ad_type, ''), ' ', IFNULL(campaign_name, ''), ' ', IFNULL(ad_name, ''), ' ', IFNULL(ecommerce_product_name, ''), ' ', IFNULL(ecommerce_category, ''), ' ', IFNULL(material_type, ''), ' ', IFNULL(is_brand_budget, '')), r'合创|合創|KOL|kol') THEN '合创'
       ELSE '图文'
     END AS spend_type
   FROM ${TABLES.g2g}
   UNION ALL
   SELECT
     'SKT' AS brand,
-    SAFE.PARSE_DATE('%Y-%m-%d', single_day) AS date,
+    COALESCE(SAFE.PARSE_DATE('%Y-%m-%d', TRIM(date_start)), SAFE.PARSE_DATE('%Y/%m/%d', TRIM(date_start)), SAFE.PARSE_DATE('%d/%m/%Y', TRIM(date_start))) AS date,
     TRIM(ecommerce_product_name) AS source_link_name,
     TRIM(category) AS source_category,
     SAFE_CAST(REGEXP_REPLACE(spend, r'[^0-9.-]', '') AS FLOAT64) * @rate AS offsite_spend,
@@ -99,24 +99,24 @@ ads AS (
     SAFE_CAST(REGEXP_REPLACE(clicks, r'[^0-9.-]', '') AS FLOAT64) AS clicks,
     SAFE_CAST(REGEXP_REPLACE(purchase_value, r'[^0-9.-]', '') AS FLOAT64) * @rate AS purchase_value,
     CASE
-      WHEN REGEXP_CONTAINS(CONCAT(IFNULL(objective, ''), ' ', IFNULL(campaign_name, ''), ' ', IFNULL(adset_name, ''), ' ', IFNULL(ad_name, ''), ' ', IFNULL(category, ''), ' ', IFNULL(ecommerce_product_name, '')), r'品牌') THEN '品牌广告'
-      WHEN REGEXP_CONTAINS(CONCAT(IFNULL(objective, ''), ' ', IFNULL(campaign_name, ''), ' ', IFNULL(adset_name, ''), ' ', IFNULL(ad_name, ''), ' ', IFNULL(category, ''), ' ', IFNULL(ecommerce_product_name, '')), r'合创|合創|KOL|kol') THEN '合创'
+      WHEN REGEXP_CONTAINS(CONCAT(IFNULL(ad_goal, ''), ' ', IFNULL(ad_type, ''), ' ', IFNULL(campaign_name, ''), ' ', IFNULL(adset_name, ''), ' ', IFNULL(ad_name, ''), ' ', IFNULL(category, ''), ' ', IFNULL(ecommerce_product_name, ''), ' ', IFNULL(ad_format_2, '')), r'品牌') THEN '品牌广告'
+      WHEN REGEXP_CONTAINS(CONCAT(IFNULL(ad_goal, ''), ' ', IFNULL(ad_type, ''), ' ', IFNULL(campaign_name, ''), ' ', IFNULL(adset_name, ''), ' ', IFNULL(ad_name, ''), ' ', IFNULL(category, ''), ' ', IFNULL(ecommerce_product_name, ''), ' ', IFNULL(ad_format_2, '')), r'合创|合創|KOL|kol') THEN '合创'
       ELSE '图文'
     END AS spend_type
   FROM ${TABLES.skt}
   UNION ALL
   SELECT
     'TP' AS brand,
-    SAFE.PARSE_DATE('%Y-%m-%d', single_day) AS date,
+    COALESCE(SAFE.PARSE_DATE('%Y-%m-%d', TRIM(day)), SAFE.PARSE_DATE('%Y/%m/%d', TRIM(day)), SAFE.PARSE_DATE('%d/%m/%Y', TRIM(day))) AS date,
     TRIM(ecommerce_product_name) AS source_link_name,
     TRIM(category) AS source_category,
     SAFE_CAST(REGEXP_REPLACE(spend, r'[^0-9.-]', '') AS FLOAT64) * @rate AS offsite_spend,
     SAFE_CAST(REGEXP_REPLACE(impressions, r'[^0-9.-]', '') AS FLOAT64) AS impressions,
-    SAFE_CAST(REGEXP_REPLACE(clicks, r'[^0-9.-]', '') AS FLOAT64) AS clicks,
+    SAFE_CAST(REGEXP_REPLACE(link_clicks, r'[^0-9.-]', '') AS FLOAT64) AS clicks,
     SAFE_CAST(REGEXP_REPLACE(purchase_value, r'[^0-9.-]', '') AS FLOAT64) * @rate AS purchase_value,
     CASE
-      WHEN REGEXP_CONTAINS(CONCAT(IFNULL(objective, ''), ' ', IFNULL(campaign_name, ''), ' ', IFNULL(adset_name, ''), ' ', IFNULL(category, ''), ' ', IFNULL(ecommerce_product_name, '')), r'品牌') THEN '品牌广告'
-      WHEN REGEXP_CONTAINS(CONCAT(IFNULL(objective, ''), ' ', IFNULL(campaign_name, ''), ' ', IFNULL(adset_name, ''), ' ', IFNULL(category, ''), ' ', IFNULL(ecommerce_product_name, '')), r'合创|合創|KOL|kol') THEN '合创'
+      WHEN REGEXP_CONTAINS(CONCAT(IFNULL(report_ad_goal, ''), ' ', IFNULL(actual_ad_goal, ''), ' ', IFNULL(kol_type, ''), ' ', IFNULL(material_type, ''), ' ', IFNULL(material_source, ''), ' ', IFNULL(ad_mix, ''), ' ', IFNULL(campaign_name, ''), ' ', IFNULL(adset_name, ''), ' ', IFNULL(category, ''), ' ', IFNULL(ecommerce_product_name, '')), r'品牌') THEN '品牌广告'
+      WHEN REGEXP_CONTAINS(CONCAT(IFNULL(report_ad_goal, ''), ' ', IFNULL(actual_ad_goal, ''), ' ', IFNULL(kol_type, ''), ' ', IFNULL(material_type, ''), ' ', IFNULL(material_source, ''), ' ', IFNULL(ad_mix, ''), ' ', IFNULL(campaign_name, ''), ' ', IFNULL(adset_name, ''), ' ', IFNULL(category, ''), ' ', IFNULL(ecommerce_product_name, '')), r'合创|合創|KOL|kol') THEN '合创'
       ELSE '图文'
     END AS spend_type
   FROM ${TABLES.tp}
