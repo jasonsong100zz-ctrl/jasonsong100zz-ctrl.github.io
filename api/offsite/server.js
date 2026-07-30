@@ -49,7 +49,16 @@ WITH product_map_unified AS (
     TRIM(skt_id) AS link_id,
     TRIM(skt_link_name) AS link_name,
     TRIM(skt_category) AS category,
-    COALESCE(NULLIF(TRIM(skt_fb_product), ''), TRIM(skt_link_name)) AS fb_product
+    TRIM(skt_fb_product) AS fb_product
+  FROM ${TABLES.map}
+  WHERE NULLIF(TRIM(skt_id), '') IS NOT NULL OR NULLIF(TRIM(skt_fb_product), '') IS NOT NULL
+  UNION ALL
+  SELECT
+    'SKT' AS brand,
+    TRIM(skt_id) AS link_id,
+    TRIM(skt_link_name) AS link_name,
+    TRIM(skt_category) AS category,
+    TRIM(skt_link_name) AS fb_product
   FROM ${TABLES.map}
   WHERE NULLIF(TRIM(skt_id), '') IS NOT NULL OR NULLIF(TRIM(skt_link_name), '') IS NOT NULL
   UNION ALL
