@@ -124,7 +124,7 @@ ads AS (
 ads_normalized AS (
   SELECT
     *,
-    LOWER(REGEXP_REPLACE(source_link_name, r'[^[:alnum:]\p{Han}]+', '')) AS join_key
+    LOWER(REGEXP_REPLACE(COALESCE(source_link_name, ''), r'[^[:alnum:]\p{Han}]+', '')) AS join_key
   FROM ads
   WHERE date BETWEEN DATE(@start) AND DATE(@end)
     AND (@brand = '' OR brand = @brand)
@@ -133,8 +133,8 @@ joined AS (
   SELECT
     ads.brand,
     IF(REGEXP_CONTAINS(ads.source_link_name, r'混合目录|混合目錄'), '', COALESCE(map.link_id, '')) AS link_id,
-    IF(REGEXP_CONTAINS(ads.source_link_name, r'混合目录|混合目錄'), '混合目录', COALESCE(map.link_name, ads.source_link_name, '未填写')) AS link_name,
-    IF(REGEXP_CONTAINS(ads.source_link_name, r'混合目录|混合目錄'), '', COALESCE(map.category, ads.source_category, '其他/赠品')) AS category,
+    IF(REGEXP_CONTAINS(ads.source_link_name, r'混合目录|混合目錄'), '混合目录', COALESCE(NULLIF(ads.source_link_name, ''), map.link_name, '未填写')) AS link_name,
+    IF(REGEXP_CONTAINS(ads.source_link_name, r'混合目录|混合目錄'), '', COALESCE(NULLIF(ads.source_category, ''), map.category, '其他/赠品')) AS category,
     ads.spend_type,
     ads.offsite_spend,
     ads.impressions,
@@ -143,6 +143,7 @@ joined AS (
   FROM ads_normalized ads
   LEFT JOIN map_dedup map
     ON ads.brand = map.brand
+   AND ads.join_key != ''
    AND ads.join_key = LOWER(REGEXP_REPLACE(COALESCE(NULLIF(map.fb_product, ''), map.link_name), r'[^[:alnum:]\p{Han}]+', ''))
 )
 SELECT
