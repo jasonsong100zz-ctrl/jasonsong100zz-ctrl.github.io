@@ -240,6 +240,66 @@ ORDER BY table_name, ordinal_position
   }
 });
 
+function debugSql() {
+  return `
+CREATE TEMP FUNCTION norm_text(value STRING) AS (
+  LOWER(REGEXP_REPLACE(
+    TRANSLATE(COALESCE(value, ''), '氣墊體華復護膚潔顏兩組噴霧潤妝膠銀質煙醫麗亞鎖鍊鏈', '气垫体华复护肤洁颜两组喷雾润妆胶银质烟医丽亚锁链链'),
+    r'[^[:alnum:]\p{Han}]+',
+    ''
+  ))
+);
+
+WITH product_map_unified AS (
+  SELECT 'G2G' AS brand, TRIM(g2g_id) AS link_id, TRIM(g2g_link_name) AS link_name, TRIM(g2g_category) AS category, TRIM(g2g_link_name) AS alias FROM ${TABLES.map}
+  UNION ALL SELECT 'SKT', TRIM(skt_id), TRIM(skt_link_name), TRIM(skt_category), TRIM(skt_link_name) FROM ${TABLES.map}
+  UNION ALL SELECT 'SKT', TRIM(skt_id), TRIM(skt_link_name), TRIM(skt_category), TRIM(skt_fb_product) FROM ${TABLES.map}
+  UNION ALL SELECT 'TP', TRIM(tp_id), TRIM(tp_link_name), TRIM(tp_category), TRIM(tp_link_name) FROM ${TABLES.map}
+),
+ads AS (
+  SELECT 'G2G' AS brand, TRIM(ecommerce_product_name) AS source_name, TRIM(ecommerce_category) AS source_category FROM ${TABLES.g2g}
+  UNION ALL SELECT 'SKT', TRIM(ecommerce_product_name), TRIM(category) FROM ${TABLES.skt}
+  UNION ALL SELECT 'TP', TRIM(ecommerce_product_name), TRIM(category) FROM ${TABLES.tp}
+)
+SELECT 'map' AS source, brand, link_id, link_name, category, alias AS name, norm_text(alias) AS norm
+FROM product_map_unified
+WHERE (@brand = '' OR brand = @brand) AND norm_text(alias) LIKE CONCAT('%', norm_text(@q), '%')
+UNION ALL
+SELECT 'ads' AS source, brand, '' AS link_id, '' AS link_name, source_category AS category, source_name AS name, norm_text(source_name) AS norm
+FROM ads
+WHERE (@brand = '' OR brand = @brand) AND norm_text(source_name) LIKE CONCAT('%', norm_text(@q), '%')
+ORDER BY source, brand, name
+LIMIT 80
+`;
+}
+
+app.get("/debug-match", async (request, response) => {
+  const q = String(request.query.q || "");
+  const brand = String(request.query.brand || "").toUpperCase();
+  if (!q.trim()) {
+    response.status(400).json({ error: "q is required" });
+    return;
+  }
+  if (brand && !["SKT", "G2G", "TP"].includes(brand)) {
+    response.status(400).json({ error: "brand must be SKT, G2G, TP or empty" });
+    return;
+  }
+  try {
+    const [rows] = await bigquery.query({
+      query: debugSql(),
+      location: "US",
+      params: { q, brand },
+    });
+    response.json({ rows });
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({
+      error: "BigQuery debug query failed",
+      detail: error instanceof Error ? error.message : String(error),
+    });
+  }
+});
+
 app.get("/offsite", async (request, response) => {
   const start = String(request.query.start || "");
   const end = String(request.query.end || "");
