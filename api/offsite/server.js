@@ -63,6 +63,7 @@ map_dedup AS (
       link_name,
       category,
       fb_product,
+      LOWER(REGEXP_REPLACE(COALESCE(NULLIF(fb_product, ''), link_name), r'[^[:alnum:]\p{Han}]+', '')) AS map_key,
       ROW_NUMBER() OVER (
         PARTITION BY brand, LOWER(REGEXP_REPLACE(COALESCE(NULLIF(fb_product, ''), link_name), r'[^[:alnum:]\p{Han}]+', ''))
         ORDER BY IF(NULLIF(link_id, '') IS NULL, 1, 0), link_name
@@ -124,27 +125,60 @@ ads AS (
 ads_normalized AS (
   SELECT
     *,
+    GENERATE_UUID() AS ad_row_id,
     LOWER(REGEXP_REPLACE(COALESCE(source_link_name, ''), r'[^[:alnum:]\p{Han}]+', '')) AS join_key
   FROM ads
   WHERE date BETWEEN DATE(@start) AND DATE(@end)
     AND (@brand = '' OR brand = @brand)
 ),
+match_candidates AS (
+  SELECT
+    ads.*,
+    map.link_id,
+    map.link_name AS mapped_link_name,
+    map.category AS mapped_category,
+    CASE
+      WHEN ads.join_key = map.map_key THEN 0
+      WHEN STRPOS(map.map_key, ads.join_key) > 0 THEN 1
+      WHEN STRPOS(ads.join_key, map.map_key) > 0 THEN 2
+      ELSE 9
+    END AS match_rank,
+    COUNTIF(ads.join_key = map.map_key) OVER (PARTITION BY ads.ad_row_id) AS exact_match_count,
+    COUNTIF(ads.join_key != map.map_key AND (STRPOS(map.map_key, ads.join_key) > 0 OR STRPOS(ads.join_key, map.map_key) > 0)) OVER (PARTITION BY ads.ad_row_id) AS fuzzy_match_count,
+    ROW_NUMBER() OVER (
+      PARTITION BY ads.ad_row_id
+      ORDER BY
+        CASE
+          WHEN ads.join_key = map.map_key THEN 0
+          WHEN STRPOS(map.map_key, ads.join_key) > 0 THEN 1
+          WHEN STRPOS(ads.join_key, map.map_key) > 0 THEN 2
+          ELSE 9
+        END,
+        LENGTH(map.map_key)
+    ) AS candidate_rank
+  FROM ads_normalized ads
+  LEFT JOIN map_dedup map
+    ON ads.brand = map.brand
+   AND ads.join_key != ''
+   AND (
+     ads.join_key = map.map_key
+     OR STRPOS(map.map_key, ads.join_key) > 0
+     OR STRPOS(ads.join_key, map.map_key) > 0
+   )
+),
 joined AS (
   SELECT
-    ads.brand,
-    IF(REGEXP_CONTAINS(ads.source_link_name, r'混合目录|混合目錄'), '', COALESCE(map.link_id, '')) AS link_id,
-    IF(REGEXP_CONTAINS(ads.source_link_name, r'混合目录|混合目錄'), '混合目录', COALESCE(NULLIF(ads.source_link_name, ''), map.link_name, '未填写')) AS link_name,
-    IF(REGEXP_CONTAINS(ads.source_link_name, r'混合目录|混合目錄'), '', COALESCE(NULLIF(ads.source_category, ''), map.category, '其他/赠品')) AS category,
+    brand,
+    IF(REGEXP_CONTAINS(source_link_name, r'混合目录|混合目錄'), '', IF(match_rank = 0 OR (match_rank IN (1, 2) AND exact_match_count = 0 AND fuzzy_match_count = 1), COALESCE(link_id, ''), '')) AS link_id,
+    IF(REGEXP_CONTAINS(source_link_name, r'混合目录|混合目錄'), '混合目录', COALESCE(NULLIF(source_link_name, ''), mapped_link_name, '未填写')) AS link_name,
+    IF(REGEXP_CONTAINS(source_link_name, r'混合目录|混合目錄'), '', COALESCE(NULLIF(source_category, ''), mapped_category, '其他/赠品')) AS category,
     ads.spend_type,
     ads.offsite_spend,
     ads.impressions,
     ads.clicks,
     ads.purchase_value
-  FROM ads_normalized ads
-  LEFT JOIN map_dedup map
-    ON ads.brand = map.brand
-   AND ads.join_key != ''
-   AND ads.join_key = LOWER(REGEXP_REPLACE(COALESCE(NULLIF(map.fb_product, ''), map.link_name), r'[^[:alnum:]\p{Han}]+', ''))
+  FROM match_candidates ads
+  WHERE candidate_rank = 1
 )
 SELECT
   brand,
