@@ -167,6 +167,27 @@ app.get("/health", (_request, response) => {
   response.json({ ok: true, projectId: PROJECT_ID, dataset: DATASET });
 });
 
+app.get("/schema", async (_request, response) => {
+  try {
+    const [rows] = await bigquery.query({
+      query: `
+SELECT table_name, column_name, ordinal_position
+FROM \`${PROJECT_ID}.${DATASET}.INFORMATION_SCHEMA.COLUMNS\`
+WHERE table_name IN ('offsite_g2g_ads', 'offsite_skt_ads', 'offsite_tp_ads', 'product_map')
+ORDER BY table_name, ordinal_position
+`,
+      location: "US",
+    });
+    response.json({ rows });
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({
+      error: "BigQuery schema query failed",
+      detail: error instanceof Error ? error.message : String(error),
+    });
+  }
+});
+
 app.get("/offsite", async (request, response) => {
   const start = String(request.query.start || "");
   const end = String(request.query.end || "");
