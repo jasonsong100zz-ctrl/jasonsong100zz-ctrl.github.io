@@ -176,6 +176,12 @@ type OffsiteRow = {
   brandAdSpend: number;
   previousBrandAdSpend: number;
 };
+type OffsiteSpendSummary = {
+  spend: number;
+  previousSpend: number;
+  clicks: number;
+  previousClicks: number;
+};
 const FALLBACK_CATEGORY = "其他/赠品";
 
 const PAGE_LABELS: Array<{ key: PageKey; label: string; note: string; number: string }> = [
@@ -1332,17 +1338,36 @@ function PanelDelta({ value, previous, mode = "ratio" }: { value: number | null;
   return <small className={`panel-delta ${trendClass(delta)}`}>{deltaText(value, previous, mode)}</small>;
 }
 
-function Insight({ brands }: { brands: BrandData[] }) {
+function Insight({ brands, offsiteSpend = 0 }: { brands: BrandData[]; offsiteSpend?: number }) {
   const sales = brands.reduce((sum, item) => sum + item.actualGmv, 0);
   const previous = brands.reduce((sum, item) => sum + item.previousActualGmv, 0);
-  const adSpend = brands.reduce((sum, item) => sum + item.current.adSpend, 0);
+  const adSpend = brands.reduce((sum, item) => sum + item.current.adSpend, 0) + offsiteSpend;
   const actual = brands.reduce((sum, item) => sum + item.actualGmv, 0);
   const mom = ratio(sales, previous);
   const roi = adSpend > 0 ? actual / adSpend : 0;
-  return <div className="insight"><b>经营判断</b><span>本期 GMV {mom === null ? "暂无环比" : `${mom >= 0 ? "增长" : "下滑"} ${Math.abs(mom * 100).toFixed(1)}%`}，综合 ROI {rate(roi)}。建议优先复盘下方品类与链接的异常变化。</span></div>;
+  return <div className="insight"><b>经营判断</b><span>本期 GMV {mom === null ? "暂无环比" : `${mom >= 0 ? "增长" : "下滑"} ${Math.abs(mom * 100).toFixed(1)}%`}，综合 ROI {rate(roi)}（含站内+站外花费）。建议优先复盘下方品类与链接的异常变化。</span></div>;
 }
 
-function Table({ rows, type }: { rows: MetricRow[]; type: "category" | "link" | "ads" }) {
+function offsiteForMetricRow(row: MetricRow, type: "category" | "link" | "ads", offsiteRows: OffsiteRow[]): OffsiteSpendSummary {
+  if (type === "ads") return { spend: 0, previousSpend: 0, clicks: 0, previousClicks: 0 };
+  const rawRowId = (row.id || "").trim();
+  const rowId = rawRowId ? normalizeId(rawRowId) : "";
+  const rowNameKey = normalizeLookupText(row.link || row.product || "");
+  const matches = offsiteRows.filter((item) => {
+    if (item.brand !== row.brand) return false;
+    if (type === "category") return item.category === row.category;
+    if (rowId && item.id && normalizeId(item.id) === rowId) return true;
+    return rowNameKey && normalizeLookupText(item.link) === rowNameKey;
+  });
+  return matches.reduce((acc, item) => ({
+    spend: acc.spend + item.spend,
+    previousSpend: acc.previousSpend + item.previousSpend,
+    clicks: acc.clicks + item.clicks,
+    previousClicks: acc.previousClicks + item.previousClicks,
+  }), { spend: 0, previousSpend: 0, clicks: 0, previousClicks: 0 });
+}
+
+function Table({ rows, type, offsiteRows = [] }: { rows: MetricRow[]; type: "category" | "link" | "ads"; offsiteRows?: OffsiteRow[] }) {
   const defaultSort: SortState = { key: type === "ads" ? "adGmv" : "gmv", direction: "desc" };
   const [sort, setSort] = useState<SortState>(defaultSort);
   useEffect(() => setSort(defaultSort), [type]);
@@ -1365,18 +1390,17 @@ function Table({ rows, type }: { rows: MetricRow[]; type: "category" | "link" | 
       { key: "primary", label: type === "category" ? "品类" : "产品名", value: (row) => type === "category" ? row.category : row.product || row.link, defaultDirection: "asc" },
       ...(type === "link" ? [{ key: "id", label: "商品ID / ID", value: (row: MetricRow) => row.id, defaultDirection: "asc" as const }] : []),
       { key: "gmv", label: "GMV", value: (row) => row.gmv },
-      { key: "adSpend", label: "站内花费", value: (row) => row.adSpend },
+      { key: "totalSpend", label: "总花费", value: (row) => row.adSpend + offsiteForMetricRow(row, type, offsiteRows).spend },
       { key: "orders", label: "订单", value: (row) => row.orders },
       { key: "aov", label: "客单价", value: (row) => row.orders > 0 ? row.gmv / row.orders : null },
       { key: "visitors", label: "访客", value: (row) => row.visitors },
-      { key: "ctr", label: "CTR", value: (row) => row.exposure > 0 ? row.clicks / row.exposure : null },
-      { key: "cart", label: "加购", value: (row) => row.cart },
-      { key: "cartRate", label: "加购率", value: (row) => row.visitors > 0 ? row.cart / row.visitors : null },
       { key: "cvr", label: "CVR", value: (row) => row.clicks > 0 ? row.orders / row.clicks : null },
-      { key: "roi", label: "ROI", value: (row) => row.adSpend > 0 ? row.adGmv / row.adSpend : null },
-      { key: "fee", label: "费比", value: (row) => row.gmv > 0 ? row.adSpend / row.gmv : null },
-      { key: "adShare", label: "广告GMV占比", value: (row) => row.gmv > 0 ? row.adGmv / row.gmv : null },
-      { key: "organicShare", label: "自然GMV占比", value: (row) => row.gmv > 0 ? 1 - row.adGmv / row.gmv : null },
+      { key: "fee", label: "费比", value: (row) => row.gmv > 0 ? (row.adSpend + offsiteForMetricRow(row, type, offsiteRows).spend) / row.gmv : null },
+      { key: "adShare", label: "站内广告GMV占比", value: (row) => row.gmv > 0 ? row.adGmv / row.gmv : null },
+      { key: "onsiteSpend", label: "站内广告花费", value: (row) => row.adSpend },
+      { key: "offsiteSpend", label: "站外广告花费", value: (row) => offsiteForMetricRow(row, type, offsiteRows).spend },
+      { key: "onsiteClicks", label: "站内广告点击量", value: (row) => row.adClicks },
+      { key: "offsiteClicks", label: "站外广告点击量", value: (row) => offsiteForMetricRow(row, type, offsiteRows).clicks },
     ];
   const sortColumn = columns.find((column) => column.key === sort.key) || columns[0];
   const sorted = [...rows].sort((a, b) => {
@@ -1388,7 +1412,7 @@ function Table({ rows, type }: { rows: MetricRow[]; type: "category" | "link" | 
   const exportMetricTable = () => {
     const headers = type === "ads"
       ? ["产品/广告", "品类", "链接GMV", "链接GMV环比", "广告成交金额", "广告成交金额环比", "广告成交占比", "广告成交占比变化", "花费", "花费环比", "ROI", "ROI环比", "曝光", "曝光环比", "点击", "点击环比", "CTR", "CTR变化", "CPC", "CPC环比", "CVR", "CVR变化"]
-      : [type === "category" ? "品类" : "产品名", ...(type === "link" ? ["商品ID / ID"] : []), "GMV", "GMV环比", "站内花费", "站内花费环比", "订单", "订单环比", "客单价", "客单价环比", "访客", "访客环比", "CTR", "CTR变化", "加购", "加购环比", "加购率", "加购率变化", "CVR", "CVR变化", "ROI", "ROI环比", "费比", "费比变化", "广告GMV占比", "广告GMV占比变化", "自然GMV占比", "自然GMV占比变化"];
+      : [type === "category" ? "品类" : "产品名", ...(type === "link" ? ["商品ID / ID"] : []), "GMV", "GMV环比", "总花费", "总花费环比", "订单", "订单环比", "客单价", "客单价环比", "访客", "访客环比", "CVR", "CVR变化", "费比", "费比变化", "站内广告GMV占比", "站内广告GMV占比变化", "站内广告花费", "站内广告花费环比", "站外广告花费", "站外广告花费环比", "站内广告点击量", "站内广告点击量环比", "站外广告点击量", "站外广告点击量环比"];
     const exportRows = sorted.map((row) => {
       const aov = row.orders > 0 ? row.gmv / row.orders : 0;
       const previousAov = row.previousOrders > 0 ? row.previousGmv / row.previousOrders : 0;
@@ -1409,7 +1433,12 @@ function Table({ rows, type }: { rows: MetricRow[]; type: "category" | "link" | 
       const cpc = row.clicks > 0 ? row.adSpend / row.clicks : 0;
       const previousCpc = row.previousClicks > 0 ? row.previousAdSpend / row.previousClicks : 0;
       if (type === "ads") return [row.product || "—", row.category || "—", formatMoney(row.gmv, true), deltaText(row.gmv, row.previousGmv), formatMoney(row.adGmv, true), deltaText(row.adGmv, row.previousAdGmv), levelPercent(adDealShare), deltaText(adDealShare, previousAdDealShare, "pp"), formatMoney(row.adSpend, true), deltaText(row.adSpend, row.previousAdSpend), rate(roi), deltaText(roi, previousRoi), formatNumber(row.exposure), deltaText(row.exposure, row.previousExposure), formatNumber(row.clicks), deltaText(row.clicks, row.previousClicks), levelPercent(ctr), deltaText(ctr, previousCtr, "pp"), formatMoneyOneDecimal(cpc), deltaText(cpc, previousCpc), levelPercent(row.clicks > 0 ? row.conversions / row.clicks : 0), deltaText(row.clicks > 0 ? row.conversions / row.clicks : 0, row.previousClicks > 0 ? row.previousConversions / row.previousClicks : 0, "pp")];
-      return [type === "category" ? row.category : row.product || row.link || "—", ...(type === "link" ? [row.id || "—"] : []), formatMoney(row.gmv, true), deltaText(row.gmv, row.previousGmv), formatMoney(row.adSpend, true), deltaText(row.adSpend, row.previousAdSpend), formatNumber(row.orders), deltaText(row.orders, row.previousOrders), formatMoney(aov), deltaText(aov, previousAov), formatNumber(row.visitors), deltaText(row.visitors, row.previousVisitors), levelPercent(ctr), deltaText(ctr, previousCtr, "pp"), formatNumber(row.cart), deltaText(row.cart, row.previousCart), levelPercent(cartRate), deltaText(cartRate, previousCartRate, "pp"), levelPercent(cvr), deltaText(cvr, previousCvr, "pp"), rate(roi), deltaText(roi, previousRoi), levelPercent(fee), deltaText(fee, previousFee, "pp"), levelPercent(share), deltaText(share, previousShare, "pp"), levelPercent(1 - share), deltaText(1 - share, 1 - previousShare, "pp")];
+      const offsite = offsiteForMetricRow(row, type, offsiteRows);
+      const totalSpend = row.adSpend + offsite.spend;
+      const previousTotalSpend = row.previousAdSpend + offsite.previousSpend;
+      const totalFee = row.gmv > 0 ? totalSpend / row.gmv : 0;
+      const previousTotalFee = row.previousGmv > 0 ? previousTotalSpend / row.previousGmv : 0;
+      return [type === "category" ? row.category : row.product || row.link || "—", ...(type === "link" ? [row.id || "—"] : []), formatMoney(row.gmv, true), deltaText(row.gmv, row.previousGmv), formatMoney(totalSpend, true), deltaText(totalSpend, previousTotalSpend), formatNumber(row.orders), deltaText(row.orders, row.previousOrders), formatMoney(aov), deltaText(aov, previousAov), formatNumber(row.visitors), deltaText(row.visitors, row.previousVisitors), levelPercent(cvr), deltaText(cvr, previousCvr, "pp"), levelPercent(totalFee), deltaText(totalFee, previousTotalFee, "pp"), levelPercent(share), deltaText(share, previousShare, "pp"), formatMoney(row.adSpend, true), deltaText(row.adSpend, row.previousAdSpend), formatMoney(offsite.spend, true), deltaText(offsite.spend, offsite.previousSpend), formatNumber(row.adClicks), deltaText(row.adClicks, row.previousAdClicks), formatNumber(offsite.clicks), deltaText(offsite.clicks, offsite.previousClicks)];
     });
     exportExcel(`台湾线上销售分析-${type === "category" ? "品类进度" : type === "link" ? "链接明细" : "广告数据"}`, "数据", headers, exportRows);
   };
@@ -1434,11 +1463,16 @@ function Table({ rows, type }: { rows: MetricRow[]; type: "category" | "link" | 
     const previousAdDealShare = row.previousGmv > 0 ? row.previousAdGmv / row.previousGmv : null;
     const cpc = row.clicks > 0 ? row.adSpend / row.clicks : 0;
     const previousCpc = row.previousClicks > 0 ? row.previousAdSpend / row.previousClicks : 0;
+    const offsite = offsiteForMetricRow(row, type, offsiteRows);
+    const totalSpend = row.adSpend + offsite.spend;
+    const previousTotalSpend = row.previousAdSpend + offsite.previousSpend;
+    const totalFee = row.gmv > 0 ? totalSpend / row.gmv : 0;
+    const previousTotalFee = row.previousGmv > 0 ? previousTotalSpend / row.previousGmv : 0;
     return <tr key={row.key}>
       <td className="primary-cell"><b title={type === "category" ? row.category : row.product || row.link || "—"}>{type === "category" ? row.category : row.product || row.link || "—"}</b><small style={{ color: BRAND_COLORS[row.brand] }}>{row.brand}{type === "link" ? ` · ${row.category || FALLBACK_CATEGORY}` : ""}</small></td>
       {type === "link" && <td>{row.id || "—"}</td>}
       {type === "ads" && <td>{row.category || "—"}</td>}
-      {type === "ads" ? <><MetricCell value={row.gmv > 0 ? row.gmv : null} previous={row.previousGmv > 0 ? row.previousGmv : null} format={(value) => formatMoney(value, true)} /><MetricCell value={row.adGmv} previous={row.previousAdGmv} format={(value) => formatMoney(value, true)} /><MetricCell value={adDealShare} previous={previousAdDealShare} format={levelPercent} mode="pp" /></> : <><MetricCell value={row.gmv} previous={row.previousGmv} format={(value) => formatMoney(value, true)} /><MetricCell value={row.adSpend} previous={row.previousAdSpend} format={(value) => formatMoney(value, true)} /><MetricCell value={row.orders} previous={row.previousOrders} format={formatNumber} /><MetricCell value={aov} previous={previousAov} format={formatMoney} /><MetricCell value={row.visitors} previous={row.previousVisitors} format={formatNumber} /><MetricCell value={ctr} previous={previousCtr} format={levelPercent} mode="pp" /><MetricCell value={row.cart} previous={row.previousCart} format={formatNumber} /><MetricCell value={cartRate} previous={previousCartRate} format={levelPercent} mode="pp" /><MetricCell value={cvr} previous={previousCvr} format={levelPercent} mode="pp" /><MetricCell value={roi} previous={previousRoi} format={rate} /><MetricCell value={fee} previous={previousFee} format={levelPercent} mode="pp" /><MetricCell value={share} previous={previousShare} format={levelPercent} mode="pp" /><MetricCell value={1 - share} previous={1 - previousShare} format={levelPercent} mode="pp" /></>}
+      {type === "ads" ? <><MetricCell value={row.gmv > 0 ? row.gmv : null} previous={row.previousGmv > 0 ? row.previousGmv : null} format={(value) => formatMoney(value, true)} /><MetricCell value={row.adGmv} previous={row.previousAdGmv} format={(value) => formatMoney(value, true)} /><MetricCell value={adDealShare} previous={previousAdDealShare} format={levelPercent} mode="pp" /></> : <><MetricCell value={row.gmv} previous={row.previousGmv} format={(value) => formatMoney(value, true)} /><MetricCell value={totalSpend} previous={previousTotalSpend} format={(value) => formatMoney(value, true)} /><MetricCell value={row.orders} previous={row.previousOrders} format={formatNumber} /><MetricCell value={aov} previous={previousAov} format={formatMoney} /><MetricCell value={row.visitors} previous={row.previousVisitors} format={formatNumber} /><MetricCell value={cvr} previous={previousCvr} format={levelPercent} mode="pp" /><MetricCell value={totalFee} previous={previousTotalFee} format={levelPercent} mode="pp" /><MetricCell value={share} previous={previousShare} format={levelPercent} mode="pp" /><MetricCell value={row.adSpend} previous={row.previousAdSpend} format={(value) => formatMoney(value, true)} /><MetricCell value={offsite.spend} previous={offsite.previousSpend} format={(value) => formatMoney(value, true)} /><MetricCell value={row.adClicks} previous={row.previousAdClicks} format={formatNumber} /><MetricCell value={offsite.clicks} previous={offsite.previousClicks} format={formatNumber} /></>}
       {type === "ads" && <><MetricCell value={row.adSpend} previous={row.previousAdSpend} format={(value) => formatMoney(value, true)} /><MetricCell value={roi} previous={previousRoi} format={rate} /><MetricCell value={row.exposure} previous={row.previousExposure} format={formatNumber} /><MetricCell value={row.clicks} previous={row.previousClicks} format={formatNumber} /><MetricCell value={ctr} previous={previousCtr} format={levelPercent} mode="pp" /><MetricCell value={cpc} previous={previousCpc} format={formatMoneyOneDecimal} /><MetricCell value={row.clicks > 0 ? row.conversions / row.clicks : 0} previous={row.previousClicks > 0 ? row.previousConversions / row.previousClicks : 0} format={levelPercent} mode="pp" /></>}
     </tr>;
   })}</tbody></table></div></>;
@@ -1743,7 +1777,7 @@ export function SalesDashboard() {
   }, [currentRange, previousRange, refresh, unlocked, page]);
 
   useEffect(() => {
-    if (!unlocked || data.length === 0 || (page !== "offsite" && !(page === "overview" && brand !== "ALL"))) return;
+    if (!unlocked || data.length === 0 || (page !== "offsite" && page !== "overview" && page !== "link" && page !== "category")) return;
     let cancelled = false;
     setOffsiteLoading(true);
     setOffsiteError("");
@@ -1764,6 +1798,27 @@ export function SalesDashboard() {
   const matches = (row: MetricRow) => (!productId || `${row.id} ${row.link}`.toLowerCase().includes(productId.toLowerCase())) && (!product || `${row.product} ${row.link}`.toLowerCase().includes(product.toLowerCase())) && (!category || row.category === category);
   const rowsFor = (type: "category" | "link" | "ads") => visible.flatMap((item) => (type === "category" ? item.category : type === "link" ? item.links : item.ads).filter(matches));
   const filteredOffsiteRows = useMemo(() => offsiteRows.filter((row) => (brand === "ALL" || row.brand === brand) && (!productId || `${row.id} ${row.link}`.toLowerCase().includes(productId.toLowerCase())) && (!product || row.link.toLowerCase().includes(product.toLowerCase())) && (!category || row.category === category)), [offsiteRows, brand, productId, product, category]);
+  const visibleBrandSet = useMemo(() => new Set(visible.map((item) => item.config.key)), [visible]);
+  const overviewOffsite = useMemo(() => offsiteRows
+    .filter((row) => visibleBrandSet.has(row.brand))
+    .reduce((acc, row) => ({
+      spend: acc.spend + row.spend,
+      previousSpend: acc.previousSpend + row.previousSpend,
+      clicks: acc.clicks + row.clicks,
+      previousClicks: acc.previousClicks + row.previousClicks,
+    }), { spend: 0, previousSpend: 0, clicks: 0, previousClicks: 0 }), [offsiteRows, visibleBrandSet]);
+  const offsiteByBrand = useMemo(() => {
+    const map = new Map<BrandKey, OffsiteSpendSummary>();
+    offsiteRows.forEach((row) => {
+      const current = map.get(row.brand) || { spend: 0, previousSpend: 0, clicks: 0, previousClicks: 0 };
+      current.spend += row.spend;
+      current.previousSpend += row.previousSpend;
+      current.clicks += row.clicks;
+      current.previousClicks += row.previousClicks;
+      map.set(row.brand, current);
+    });
+    return map;
+  }, [offsiteRows]);
   const total = visible.reduce((acc, item) => ({
     gmv: acc.gmv + item.actualGmv,
     previous: acc.previous + item.previousActualGmv,
@@ -1781,8 +1836,10 @@ export function SalesDashboard() {
     previousVoucher: acc.previousVoucher + item.previousVoucherShopee,
     goal: acc.goal + item.config.goal,
   }), { gmv: 0, previous: 0, orders: 0, previousOrders: 0, visitors: 0, previousVisitors: 0, cart: 0, previousCart: 0, adGmv: 0, previousAdGmv: 0, adSpend: 0, previousAdSpend: 0, voucher: 0, previousVoucher: 0, goal: 0 });
-  const totalRoi = total.adSpend > 0 ? total.gmv / total.adSpend : 0;
-  const previousTotalRoi = total.previousAdSpend > 0 ? total.previous / total.previousAdSpend : null;
+  const totalAdCost = total.adSpend + overviewOffsite.spend;
+  const previousTotalAdCost = total.previousAdSpend + overviewOffsite.previousSpend;
+  const totalRoi = totalAdCost > 0 ? total.gmv / totalAdCost : 0;
+  const previousTotalRoi = previousTotalAdCost > 0 ? total.previous / previousTotalAdCost : null;
 
   async function digest(value: string) {
     const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
@@ -1808,22 +1865,22 @@ export function SalesDashboard() {
     {offsiteError && <div className="data-alert"><b>站外广告数据同步失败</b><span>{offsiteError}</span><button onClick={() => setRefresh((value) => value + 1)}>重新同步</button></div>}
     {page === "channels" ? <><ChannelSummary rows={channelData.rows} /><section className="data-page channel-page"><div className="section-title"><span>07</span><div><h2>线上 / 线下 SKU 销量对比</h2><p>线上数据来自台湾线上 SKU 销量表；线下汇总三品牌各通路原始 SKU 销量；07 独立按 SKU 匹配到 SPU 与品类，不影响链接明细和品类进度。</p></div><em>{channelLoading ? "同步中" : `${channelData.rows.length} 个SKU`}</em></div>{channelError && <div className="data-alert"><b>销量数据同步失败</b><span>{channelError}</span></div>}{channelLoading && channelData.rows.length === 0 ? <div className="loading-state"><span className="loading-mark" /><div><strong>正在同步线上与线下 SKU 销量</strong><p>按主日期范围和环比日期范围汇总 SKU，再映射到 SPU</p></div></div> : <><div className="channel-subsection"><div><h3>品类销量对比</h3><p>先看各品牌品类层级的线上、线下差距与倍数。</p></div></div><ChannelCategoryTable rows={channelData.rows} brand={brand} /><div className="channel-subsection sku-subsection"><div><h3>SPU 销量明细</h3><p>默认按 SPU 汇总；展开后查看 SKU 码和 SKU 名。</p></div></div><ChannelSpuTable rows={channelData.rows} brand={brand} /></>}</section></> : loading && data.length === 0 ? <div className="loading-state"><span className="loading-mark" /><div><strong>正在同步销售与广告数据</strong><p>读取三品牌的店铺、链接、商品ID和广告明细</p></div></div> : <>
       {page === "overview" && <>
-        <section className="metric-grid"><MetricCard label="累计 GMV" value={formatMoney(total.gmv, true)} delta={ratio(total.gmv, total.previous)} note={`DMS折后实收 · 环比区间 ${formatMoney(total.previous, true)}`} color="#2364d8" /><MetricCard label="目标 GMV 达成" value={levelPercent(total.goal > 0 ? total.gmv / total.goal : null)} delta={total.goal > 0 ? (total.gmv - total.previous) / total.goal : null} deltaMode="pp" note={`目标 ${formatMoney(total.goal, true)}`} color="#ff766b" /><MetricCard label="综合费比" value={levelPercent(total.gmv > 0 ? total.adSpend / total.gmv : null)} delta={(total.gmv > 0 && total.previous > 0) ? total.adSpend / total.gmv - total.previousAdSpend / total.previous : null} deltaMode="pp" note="站内花费 / DMS GMV" color="#1ba89c" /><MetricCard label="综合 ROI" value={rate(totalRoi)} delta={ratio(totalRoi, previousTotalRoi || 0)} note={`DMS GMV / 站内花费`} color="#8d7bd8" /></section>
-        <section className="metric-grid secondary"><MetricCard label="订单量" value={formatNumber(total.orders)} delta={ratio(total.orders, total.previousOrders)} note={`客单价 ${formatMoney(total.orders > 0 ? total.gmv / total.orders : 0)}`} color="#2364d8" /><MetricCard label="虾皮补贴券" value={formatMoney(total.voucher, true)} delta={ratio(total.voucher, total.previousVoucher)} note={`Voucher from shopee · 占GMV ${levelPercent(total.gmv > 0 ? total.voucher / total.gmv : null)}`} color="#ff766b" /><MetricCard label="加购量" value={formatNumber(total.cart)} delta={ratio(total.cart, total.previousCart)} note={`加购率 ${levelPercent(total.visitors > 0 ? total.cart / total.visitors : null)}`} color="#1ba89c" /><MetricCard label="广告GMV占比" value={levelPercent(total.gmv > 0 ? total.adGmv / total.gmv : null)} delta={(total.gmv > 0 && total.previous > 0) ? total.adGmv / total.gmv - total.previousAdGmv / total.previous : null} deltaMode="pp" note={`自然GMV ${formatMoney(Math.max(0, total.gmv - total.adGmv), true)}`} color="#8d7bd8" /></section>
-        <section className="brand-panels">{visible.map((item) => { const mom = ratio(item.actualGmv, item.previousActualGmv); const share = total.gmv > 0 ? item.actualGmv / total.gmv : null; const previousShare = total.previous > 0 ? item.previousActualGmv / total.previous : null; const roi = item.current.adSpend > 0 ? item.actualGmv / item.current.adSpend : null; const previousRoi = item.previous.adSpend > 0 ? item.previousActualGmv / item.previous.adSpend : null; const goalRate = item.config.goal > 0 ? item.actualGmv / item.config.goal : null; const previousGoalRate = item.config.goal > 0 ? item.previousActualGmv / item.config.goal : null; const organicGmv = Math.max(0, item.actualGmv - item.current.adGmv); const previousOrganicGmv = Math.max(0, item.previousActualGmv - item.previous.adGmv); const brandColor = BRAND_COLORS[item.config.key]; return <article className="brand-panel" style={{ "--brand-color": brandColor } as React.CSSProperties} key={item.config.key}><div className="panel-title"><b>{item.config.key}</b><span>{item.config.name}</span></div><div className="brand-main"><strong>{formatMoney(item.actualGmv, true)} GMV</strong><div><small>环比区间</small><b>{percent(mom)}</b></div></div><div className="brand-stats"><div><span>目标达成</span><b>{levelPercent(goalRate)}</b><PanelDelta value={goalRate} previous={previousGoalRate} mode="pp" /></div><div><span>品牌占比</span><b>{levelPercent(share)}</b><PanelDelta value={share} previous={previousShare} mode="pp" /></div><div><span>综合ROI</span><b>{rate(roi)}</b><PanelDelta value={roi} previous={previousRoi} /></div></div><div className="brand-stats lower"><div><span>站内花费</span><b>{formatMoney(item.current.adSpend, true)}</b><PanelDelta value={item.current.adSpend} previous={item.previous.adSpend} /></div><div><span>广告GMV</span><b>{formatMoney(item.current.adGmv, true)}</b><PanelDelta value={item.current.adGmv} previous={item.previous.adGmv} /></div><div><span>自然GMV</span><b>{formatMoney(organicGmv, true)}</b><PanelDelta value={organicGmv} previous={previousOrganicGmv} /></div><div><span>订单量</span><b>{formatNumber(item.current.orders)}</b><PanelDelta value={item.current.orders} previous={item.previous.orders} /></div></div><p>点击下方页面进入 {item.config.key} 的品类、链接和广告明细。</p></article>; })}</section>
-        <Insight brands={visible} />
+        <section className="metric-grid"><MetricCard label="累计 GMV" value={formatMoney(total.gmv, true)} delta={ratio(total.gmv, total.previous)} note={`DMS折后实收 · 环比区间 ${formatMoney(total.previous, true)}`} color="#2364d8" /><MetricCard label="目标 GMV 达成" value={levelPercent(total.goal > 0 ? total.gmv / total.goal : null)} delta={total.goal > 0 ? (total.gmv - total.previous) / total.goal : null} deltaMode="pp" note={`目标 ${formatMoney(total.goal, true)}`} color="#ff766b" /><MetricCard label="综合费比" value={levelPercent(total.gmv > 0 ? totalAdCost / total.gmv : null)} delta={(total.gmv > 0 && total.previous > 0) ? totalAdCost / total.gmv - previousTotalAdCost / total.previous : null} deltaMode="pp" note="总花费 / DMS GMV" color="#1ba89c" /><MetricCard label="综合 ROI" value={rate(totalRoi)} delta={ratio(totalRoi, previousTotalRoi || 0)} note="DMS GMV / 总花费" color="#8d7bd8" /></section>
+        <section className="metric-grid secondary"><MetricCard label="订单量" value={formatNumber(total.orders)} delta={ratio(total.orders, total.previousOrders)} note={`客单价 ${formatMoney(total.orders > 0 ? total.gmv / total.orders : 0)}`} color="#2364d8" /><MetricCard label="虾皮补贴券" value={formatMoney(total.voucher, true)} delta={ratio(total.voucher, total.previousVoucher)} note={`Voucher from shopee · 占GMV ${levelPercent(total.gmv > 0 ? total.voucher / total.gmv : null)}`} color="#ff766b" /><MetricCard label="站外花费" value={formatMoney(overviewOffsite.spend, true)} delta={ratio(overviewOffsite.spend, overviewOffsite.previousSpend)} note={`站外点击 ${formatNumber(overviewOffsite.clicks)}`} color="#1ba89c" /><MetricCard label="站内广告GMV占比" value={levelPercent(total.gmv > 0 ? total.adGmv / total.gmv : null)} delta={(total.gmv > 0 && total.previous > 0) ? total.adGmv / total.gmv - total.previousAdGmv / total.previous : null} deltaMode="pp" note={`站内广告GMV ${formatMoney(total.adGmv, true)}`} color="#8d7bd8" /></section>
+        <section className="brand-panels">{visible.map((item) => { const brandOffsite = offsiteByBrand.get(item.config.key) || { spend: 0, previousSpend: 0, clicks: 0, previousClicks: 0 }; const mom = ratio(item.actualGmv, item.previousActualGmv); const share = total.gmv > 0 ? item.actualGmv / total.gmv : null; const previousShare = total.previous > 0 ? item.previousActualGmv / total.previous : null; const brandCost = item.current.adSpend + brandOffsite.spend; const previousBrandCost = item.previous.adSpend + brandOffsite.previousSpend; const roi = brandCost > 0 ? item.actualGmv / brandCost : null; const previousRoi = previousBrandCost > 0 ? item.previousActualGmv / previousBrandCost : null; const goalRate = item.config.goal > 0 ? item.actualGmv / item.config.goal : null; const previousGoalRate = item.config.goal > 0 ? item.previousActualGmv / item.config.goal : null; const brandColor = BRAND_COLORS[item.config.key]; return <article className="brand-panel" style={{ "--brand-color": brandColor } as React.CSSProperties} key={item.config.key}><div className="panel-title"><b>{item.config.key}</b><span>{item.config.name}</span></div><div className="brand-main"><strong>{formatMoney(item.actualGmv, true)} GMV</strong><div><small>环比区间</small><b>{percent(mom)}</b></div></div><div className="brand-stats"><div><span>目标达成</span><b>{levelPercent(goalRate)}</b><PanelDelta value={goalRate} previous={previousGoalRate} mode="pp" /></div><div><span>品牌占比</span><b>{levelPercent(share)}</b><PanelDelta value={share} previous={previousShare} mode="pp" /></div><div><span>综合ROI</span><b>{rate(roi)}</b><PanelDelta value={roi} previous={previousRoi} /></div></div><div className="brand-stats lower"><div><span>站内花费</span><b>{formatMoney(item.current.adSpend, true)}</b><PanelDelta value={item.current.adSpend} previous={item.previous.adSpend} /></div><div><span>站外花费</span><b>{formatMoney(brandOffsite.spend, true)}</b><PanelDelta value={brandOffsite.spend} previous={brandOffsite.previousSpend} /></div><div><span>站内广告GMV</span><b>{formatMoney(item.current.adGmv, true)}</b><PanelDelta value={item.current.adGmv} previous={item.previous.adGmv} /></div><div><span>订单量</span><b>{formatNumber(item.current.orders)}</b><PanelDelta value={item.current.orders} previous={item.previous.orders} /></div></div><p>点击下方页面进入 {item.config.key} 的品类、链接和广告明细。</p></article>; })}</section>
+        <Insight brands={visible} offsiteSpend={overviewOffsite.spend} />
         <section className="comparison-panel"><div className="section-title"><span>01</span><div><h2>品牌每日销售与环比</h2><p>每个品牌一行：左侧比较本期 / 环比区间 GMV，右侧展示站内费比及变化。</p></div><em>{rangeLabel(currentRange)} · {rangeLabel(previousRange)}</em></div><div className="brand-daily-rows">{visible.map((item) => <DailyBrandRow key={item.config.key} item={item} comparisonLabel={comparisonLabel} currentRange={currentRange} previousRange={previousRange} />)}</div></section>
         {brand !== "ALL" && <>
-          <section className="data-page"><div className="section-title"><span>02</span><div><h2>{brand} · 品类进度</h2><p>通过匹配表的商品ID补齐产品与类目。</p></div><em>{rowsFor("category").length} 条明细</em></div><Table rows={rowsFor("category")} type="category" /></section>
-          <section className="data-page"><div className="section-title"><span>04</span><div><h2>{brand} · 链接明细</h2><p>以商品ID / ID为关联主键。</p></div><em>{rowsFor("link").length} 条明细</em></div><Table rows={rowsFor("link")} type="link" /></section>
+          <section className="data-page"><div className="section-title"><span>02</span><div><h2>{brand} · 品类进度</h2><p>通过匹配表的商品ID补齐产品与类目。</p></div><em>{rowsFor("category").length} 条明细</em></div><Table rows={rowsFor("category")} type="category" offsiteRows={offsiteRows} /></section>
+          <section className="data-page"><div className="section-title"><span>04</span><div><h2>{brand} · 链接明细</h2><p>以商品ID / ID为关联主键。</p></div><em>{rowsFor("link").length} 条明细</em></div><Table rows={rowsFor("link")} type="link" offsiteRows={offsiteRows} /></section>
           <section className="data-page"><div className="section-title"><span>05</span><div><h2>{brand} · 站外广告数据</h2><p>按电商产品名匹配链接简称，再以商品ID回填链接经营数据；混合目录仅保留广告数据。</p></div><em>{offsiteLoading ? "同步中" : `${filteredOffsiteRows.length} 条明细`}</em></div>{offsiteLoading && offsiteRows.length === 0 ? <div className="loading-state"><span className="loading-mark" /><div><strong>正在同步站外广告数据</strong><p>读取站外投放表和产品 map</p></div></div> : <OffsiteTable rows={filteredOffsiteRows} />}</section>
           <section className="data-page"><div className="section-title"><span>06</span><div><h2>{brand} · 广告数据</h2><p>站内花费、广告GMV与投放效率。</p></div><em>{rowsFor("ads").length} 条明细</em></div><Table rows={rowsFor("ads")} type="ads" /></section>
         </>}
       </>}
       {page === "offsite" && <section className="data-page"><div className="section-title"><span>05</span><div><h2>站外广告数据</h2><p>经营数据按商品ID / ID回填现有链接明细；广告数据来自三品牌站外投放源表。</p></div><em>{offsiteLoading ? "同步中" : `${filteredOffsiteRows.length} 条明细`}</em></div>{offsiteLoading && offsiteRows.length === 0 ? <div className="loading-state"><span className="loading-mark" /><div><strong>正在同步站外广告数据</strong><p>读取站外投放表和产品 map</p></div></div> : <OffsiteTable rows={filteredOffsiteRows} />}</section>}
-      {page !== "overview" && page !== "channels" && page !== "offsite" && <section className="data-page"><div className="section-title"><span>{currentPage.number}</span><div><h2>{currentPage.label}</h2><p>{currentPage.note} · 已应用品牌、日期范围、商品ID、产品名和品类筛选。</p></div><em>{visible.reduce((sum, item) => sum + (page === "category" ? item.category.length : page === "link" ? item.links.length : item.ads.length), 0)} 条明细</em></div><Table rows={rowsFor(page)} type={page} /></section>}
+      {page !== "overview" && page !== "channels" && page !== "offsite" && <section className="data-page"><div className="section-title"><span>{currentPage.number}</span><div><h2>{currentPage.label}</h2><p>{currentPage.note} · 已应用品牌、日期范围、商品ID、产品名和品类筛选。</p></div><em>{visible.reduce((sum, item) => sum + (page === "category" ? item.category.length : page === "link" ? item.links.length : item.ads.length), 0)} 条明细</em></div><Table rows={rowsFor(page)} type={page} offsiteRows={offsiteRows} /></section>}
     </>}
-    <footer><span>数据源：台湾 SP 三品牌数据表</span><span>站外投放字段预留 · 站内广告 ROI = 广告归因 GMV / 站内花费</span></footer>
+    <footer><span>数据源：台湾 SP 三品牌数据表</span><span>综合费比 / 综合 ROI 已按站内广告 + 站外广告总费用计算</span></footer>
     </div></div>
   </main>;
 }
