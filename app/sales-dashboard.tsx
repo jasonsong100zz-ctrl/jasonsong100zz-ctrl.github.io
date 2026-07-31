@@ -914,7 +914,7 @@ async function loadOffsiteData(period: DateRange, previousPeriod: DateRange, bra
       const id = rawId ? normalizeId(rawId) : "";
       const linkFromSales = id ? linkById.get(`${brand}:${id}`) : linkByName.get(`${brand}:${normalizeLookupText(sourceName)}`);
       const link = isMixed ? "混合目录" : sourceName || linkFromSales?.product || "未填写";
-      const category = isMixed ? "" : cleanText(row.category) || linkFromSales?.category || FALLBACK_CATEGORY;
+      const category = isMixed ? "" : normalizeCategory(cleanText(row.category) || linkFromSales?.category || FALLBACK_CATEGORY);
       const key = `${brand}:${isMixed ? "mixed" : id || normalizeLookupText(link) || normalizeLookupText(sourceName) || `row-${rowIndex}`}`;
       const existing = groups.get(key) || {
         key,
@@ -964,7 +964,7 @@ async function loadOffsiteData(period: DateRange, previousPeriod: DateRange, bra
       const id = rawId ? normalizeId(rawId) : "";
       const linkFromSales = id ? linkById.get(`${brand}:${id}`) : linkByName.get(`${brand}:${normalizeLookupText(sourceName)}`);
       const link = isMixed ? "混合目录" : sourceName || linkFromSales?.product || "未填写";
-      const category = isMixed ? "" : cleanText(row.category) || linkFromSales?.category || FALLBACK_CATEGORY;
+      const category = isMixed ? "" : normalizeCategory(cleanText(row.category) || linkFromSales?.category || FALLBACK_CATEGORY);
       const key = `${brand}:${isMixed ? "mixed" : id || normalizeLookupText(link) || normalizeLookupText(sourceName) || `row-${rowIndex}`}`;
       const existing = groups.get(key) || {
         key,
@@ -1353,9 +1353,10 @@ function offsiteForMetricRow(row: MetricRow, type: "category" | "link" | "ads", 
   const rawRowId = (row.id || "").trim();
   const rowId = rawRowId ? normalizeId(rawRowId) : "";
   const rowNameKey = normalizeLookupText(row.link || row.product || "");
+  const rowCategoryKey = normalizeLookupText(row.category || "");
   const matches = offsiteRows.filter((item) => {
     if (item.brand !== row.brand) return false;
-    if (type === "category") return item.category === row.category;
+    if (type === "category") return normalizeLookupText(item.category || "") === rowCategoryKey;
     if (rowId && item.id && normalizeId(item.id) === rowId) return true;
     return rowNameKey && normalizeLookupText(item.link) === rowNameKey;
   });
