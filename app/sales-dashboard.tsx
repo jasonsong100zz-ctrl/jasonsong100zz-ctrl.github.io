@@ -205,6 +205,44 @@ const OFFSITE_CONFIGS: OffsiteConfig[] = [
   { brand: "TP", spreadsheetId: "1ZEvZNIULKovBaGvXC3v6jeIl_l5VDlXWkI4RhLPd7kg", gid: 1346236884, date: "A", spend: "F", impressions: "K", clicks: "L", purchaseValue: "G", productName: "Y", category: "Z", typeColumns: ["O", "R", "U", "X"] },
 ];
 
+const sheetUrl = (spreadsheetId: string, gid?: number | string) =>
+  `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit${gid === undefined ? "" : `?gid=${gid}#gid=${gid}`}`;
+
+const DATA_SOURCE_GROUPS = [
+  {
+    title: "销售经营",
+    items: [
+      { label: "三品牌销售源表", detail: "店铺 / 链接 / 站内广告 / DMS", href: sheetUrl(SHEET_ID) },
+      { label: "产品 / 品类 / SPU 匹配", detail: "链接ID、链接简称、品类归属", href: sheetUrl(OFFSITE_PRODUCT_MAP_SHEET_ID, 0) },
+      { label: "站外产品 map", detail: "FB产品名、链接简称、链接ID", href: sheetUrl(OFFSITE_PRODUCT_MAP_SHEET_ID, OFFSITE_PRODUCT_MAP_GID) },
+    ],
+  },
+  {
+    title: "SKU 销量",
+    items: [
+      { label: "台湾线上 SKU", detail: "线上销量源表", href: sheetUrl(ONLINE_SKU_SHEET_ID, 0) },
+      { label: "线下 SKU 汇总", detail: "看板实际读取 CSV", href: "/offline_sku_sales.csv" },
+      { label: "线下原始表 1", detail: "原始线下销量", href: sheetUrl("1xEBYyD6q0rv2NNv2Ws7vJ5fKg4ZLbk6RCEoHeUsEqFE", 785032278) },
+      { label: "线下原始表 2", detail: "原始线下销量", href: sheetUrl("1d9tjvyVicHVN5Eb1CdLBOIV-V3O8YzWK7s5YUB33CLU", 1734680924) },
+      { label: "线下原始表 3", detail: "原始线下销量", href: sheetUrl("16BHn3Lm1wP7ueh89Xb2Z6x4xYOFMX5p34wHZyz8xgdk", 1001308640) },
+    ],
+  },
+  {
+    title: "站外广告",
+    items: [
+      ...OFFSITE_CONFIGS.map((item) => ({ label: `${item.brand} 站外投放`, detail: `gid ${item.gid}`, href: sheetUrl(item.spreadsheetId, item.gid) })),
+      { label: "站外 API 检查", detail: "看板读取接口", href: `${OFFSITE_API_URL}/health` },
+    ],
+  },
+  {
+    title: "数据仓库",
+    items: [
+      { label: "BigQuery · id-g2g.tw", detail: "raw_offsite_* / product_map / offsite_*", href: "https://console.cloud.google.com/bigquery?project=id-g2g" },
+      { label: "Google Cloud 项目", detail: "id-g2g", href: "https://console.cloud.google.com/welcome?project=id-g2g" },
+    ],
+  },
+];
+
 const BRANDS: BrandConfig[] = [
   {
     key: "SKT",
@@ -1730,6 +1768,25 @@ function ChannelSpuBrandTable({ rows, brand }: { rows: ChannelSkuRow[]; brand: B
   })}</tbody></table></div></>;
 }
 
+function DataSourceLinks() {
+  return <details className="source-panel" open>
+    <summary>数据源路径</summary>
+    <p>修数优先改源表；线下 SKU 当前读取内置 CSV；站外数据经 BigQuery / API 同步。</p>
+    <div className="source-list">
+      {DATA_SOURCE_GROUPS.map((group) => <div className="source-group" key={group.title}>
+        <strong>{group.title}</strong>
+        {group.items.map((item) => {
+          const external = !item.href.startsWith("/");
+          return <a className="source-link" key={`${group.title}-${item.label}`} href={item.href} target={external ? "_blank" : undefined} rel={external ? "noreferrer" : undefined}>
+            <span>{item.label}</span>
+            <small>{item.detail}</small>
+          </a>;
+        })}
+      </div>)}
+    </div>
+  </details>;
+}
+
 export function SalesDashboard() {
   const [unlocked, setUnlocked] = useState(false);
   const [password, setPassword] = useState("");
@@ -1858,7 +1915,7 @@ export function SalesDashboard() {
   const comparisonLabel = `环比 ${rangeLabel(previousRange)}`;
   return <main className="dashboard">
     <div className="currency-note"><span>金额单位：人民币 CNY</span><small>源表 TWD 金额按运营口径 1 TWD = 0.21 CNY 换算；目标值保持人民币</small></div>
-    <div className="dashboard-layout"><aside className="side-nav"><div className="side-brand"><span>TW / SP</span><b>品牌分析室</b></div><p className="side-label">看板入口</p><button className={brand === "ALL" && page === "overview" ? "active" : ""} onClick={() => { setBrand("ALL"); setPage("overview"); }}><strong>总览</strong><small>三品牌经营总览</small></button>{BRANDS.map((item) => <button key={item.key} style={{ "--brand-color": BRAND_COLORS[item.key] } as React.CSSProperties} className={brand === item.key && page === "overview" ? "active" : ""} onClick={() => { setBrand(item.key); setPage("overview"); }}><strong>{item.key}</strong><small>{item.name}</small></button>)}<div className="side-divider" /><button className={page === "channels" ? "active" : ""} onClick={() => { setBrand("ALL"); setPage("channels"); }}><strong>线上 / 线下 SKU</strong><small>销量环比与差距</small></button></aside><div className="dashboard-content">
+    <div className="dashboard-layout"><aside className="side-nav"><div className="side-brand"><span>TW / SP</span><b>品牌分析室</b></div><p className="side-label">看板入口</p><button className={brand === "ALL" && page === "overview" ? "active" : ""} onClick={() => { setBrand("ALL"); setPage("overview"); }}><strong>总览</strong><small>三品牌经营总览</small></button>{BRANDS.map((item) => <button key={item.key} style={{ "--brand-color": BRAND_COLORS[item.key] } as React.CSSProperties} className={brand === item.key && page === "overview" ? "active" : ""} onClick={() => { setBrand(item.key); setPage("overview"); }}><strong>{item.key}</strong><small>{item.name}</small></button>)}<div className="side-divider" /><button className={page === "channels" ? "active" : ""} onClick={() => { setBrand("ALL"); setPage("channels"); }}><strong>线上 / 线下 SKU</strong><small>销量环比与差距</small></button><div className="side-divider" /><DataSourceLinks /></aside><div className="dashboard-content">
     <header className="topbar"><div><p className="eyebrow">SALES & COST EFFICIENCY</p><h1>台湾线上销售分析</h1><p className="subtitle">聚焦费用投入对 GMV 的影响 · SKT / G2G / TP · {rangeLabel(currentRange)} 对比 {rangeLabel(previousRange)}</p></div><button className="primary-button" onClick={() => setRefresh((value) => value + 1)}>＋ 更新销售数据</button></header>
     <section className="filter-bar"><div><label>品牌</label><select value={brand} onChange={(event) => setBrand(event.target.value as "ALL" | BrandKey)}><option value="ALL">全部品牌</option>{BRANDS.map((item) => <option value={item.key} key={item.key}>{item.key} · {item.name}</option>)}</select></div><div><label>主日期从</label><input type="date" value={currentRange.start} onChange={(event) => setCurrentRange((value) => ({ ...value, start: event.target.value }))} /></div><div><label>主日期到</label><input type="date" value={currentRange.end} onChange={(event) => setCurrentRange((value) => ({ ...value, end: event.target.value }))} /></div><div><label>环比日期从</label><input type="date" value={previousRange.start} onChange={(event) => setPreviousRange((value) => ({ ...value, start: event.target.value }))} /></div><div><label>环比日期到</label><input type="date" value={previousRange.end} onChange={(event) => setPreviousRange((value) => ({ ...value, end: event.target.value }))} /></div><div><label>商品ID / ID</label><input value={productId} onChange={(event) => setProductId(event.target.value)} placeholder="输入商品ID / ID" /></div><div><label>产品名</label><input value={product} onChange={(event) => setProduct(event.target.value)} placeholder="搜索产品名" /></div><div><label>品类</label><select value={category} onChange={(event) => setCategory(event.target.value)}><option value="">全部品类</option>{options.categories.map((item) => <option key={item}>{item}</option>)}</select></div><button className="reset-button" onClick={resetFilters}>重置筛选</button></section>
     <nav className="page-tabs">{PAGE_LABELS.map((item) => <button key={item.key} className={page === item.key ? "active" : ""} onClick={() => setPage(item.key)}><b>{item.number}</b><span>{item.label}</span><small>{item.note}</small></button>)}<span className="sync-state"><i className={error || offsiteError ? "error-dot" : ""} />{loading || offsiteLoading ? "同步中" : "数据已同步"}</span></nav>
