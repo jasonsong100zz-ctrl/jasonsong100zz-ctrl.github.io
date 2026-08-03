@@ -3,7 +3,8 @@ name: Refresh offline SKU sales
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 1 * * *"
+    # Beijing/Taipei 12:00 and 18:00. GitHub cron uses UTC.
+    - cron: "0 4,10 * * *"
 
 permissions:
   contents: write
