@@ -9,7 +9,7 @@ const PASSWORD_HASH =
 const csvInFlight = new Map<string, Promise<string[][]>>();
 
 type BrandKey = "SKT" | "G2G" | "TP";
-type PageKey = "overview" | "category" | "link" | "offsite" | "ads" | "channels";
+type PageKey = "overview" | "category" | "shops" | "link" | "offsite" | "ads" | "channels";
 type GvizRow = { c: Array<{ v?: unknown } | null> };
 type MetricRow = {
   key: string;
@@ -136,6 +136,19 @@ type ChannelSpuRow = {
 };
 
 type ChannelData = { rows: ChannelSkuRow[] };
+type ShopDailyRow = {
+  brand: BrandKey;
+  date: string;
+  sales: number;
+  orders: number;
+  pageviews: number;
+  visitors: number;
+  buyers: number;
+  newBuyers: number;
+};
+type ShopMetric = Omit<ShopDailyRow, "brand" | "date"> & { conversion: number | null; aov: number | null };
+type ShopMetricKey = "sales" | "visitors" | "buyers" | "newBuyers" | "conversion" | "aov";
+type ShopDailyConfig = { brand: BrandKey; sheet: string; date: string; sales: string; orders: string; pageviews: string; visitors: string; buyers: string; newBuyers: string };
 type OffsiteConfig = { brand: BrandKey; spreadsheetId: string; gid: number; sheet: string; date: string; spend: string; impressions: string; clicks: string; purchaseValue: string; productName: string; category: string; typeColumns: string[] };
 type OffsiteMapRecord = { brand: BrandKey; id: string; link: string; category: string };
 type OffsiteApiRow = {
@@ -187,10 +200,17 @@ const FALLBACK_CATEGORY = "其他/赠品";
 const PAGE_LABELS: Array<{ key: PageKey; label: string; note: string; number: string }> = [
   { key: "overview", label: "品牌总览", note: "经营结果与效率", number: "01" },
   { key: "category", label: "品类进度", note: "品类贡献与转化", number: "02" },
+  { key: "shops", label: "店铺维度", note: "访客、买家与转化趋势", number: "03" },
   { key: "link", label: "链接明细", note: "商品链接经营", number: "04" },
   { key: "offsite", label: "站外广告数据", note: "站外投放与链接经营", number: "05" },
   { key: "ads", label: "广告数据", note: "站内投放效率", number: "06" },
   { key: "channels", label: "线上 / 线下 SKU", note: "销量差距与环比", number: "07" },
+];
+
+const SHOP_DAILY_CONFIGS: ShopDailyConfig[] = [
+  { brand: "SKT", sheet: "SKT-店铺维度每日", date: "B", sales: "C", orders: "D", pageviews: "F", visitors: "G", buyers: "M", newBuyers: "N" },
+  { brand: "G2G", sheet: "G2G-店鋪維度每日", date: "A", sales: "B", orders: "C", pageviews: "E", visitors: "F", buyers: "L", newBuyers: "M" },
+  { brand: "TP", sheet: "TP-店鋪維度每日", date: "A", sales: "B", orders: "C", pageviews: "E", visitors: "F", buyers: "L", newBuyers: "M" },
 ];
 
 const ONLINE_SKU_SHEET_ID = SHEET_ID;
@@ -719,6 +739,45 @@ function normalizeDateKey(value: string) {
     return isoDate(currentYear, Number(monthDay[1]), Number(monthDay[2]));
   }
   return value;
+}
+
+function shopRowsInRange(rows: ShopDailyRow[], range: DateRange) {
+  return rows.filter((row) => row.date >= range.start && row.date <= range.end);
+}
+
+function aggregateShopRows(rows: ShopDailyRow[]): ShopMetric {
+  const total = rows.reduce((acc, row) => ({
+    sales: acc.sales + row.sales,
+    orders: acc.orders + row.orders,
+    pageviews: acc.pageviews + row.pageviews,
+    visitors: acc.visitors + row.visitors,
+    buyers: acc.buyers + row.buyers,
+    newBuyers: acc.newBuyers + row.newBuyers,
+  }), { sales: 0, orders: 0, pageviews: 0, visitors: 0, buyers: 0, newBuyers: 0 });
+  return {
+    ...total,
+    conversion: total.pageviews > 0 ? total.orders / total.pageviews : null,
+    aov: total.orders > 0 ? total.sales / total.orders : null,
+  };
+}
+
+async function loadShopDailyData(range: DateRange) {
+  const rows = await Promise.all(SHOP_DAILY_CONFIGS.map(async (config) => {
+    const columns = [config.date, config.sales, config.orders, config.pageviews, config.visitors, config.buyers, config.newBuyers];
+    const query = `select ${columns.join(",")} where ${config.date} >= date '${range.start}' and ${config.date} <= date '${range.end}'`;
+    const result = await querySheet(config.sheet, query);
+    return result.map((row): ShopDailyRow => ({
+      brand: config.brand,
+      date: normalizeDateKey(stringAt(row, 0)),
+      sales: numberAt(row, 1) * DEFAULT_TWD_TO_CNY,
+      orders: numberAt(row, 2),
+      pageviews: numberAt(row, 3),
+      visitors: numberAt(row, 4),
+      buyers: numberAt(row, 5),
+      newBuyers: numberAt(row, 6),
+    })).filter((row) => row.date >= range.start && row.date <= range.end);
+  }));
+  return rows.flat();
 }
 
 function defaultCurrentRange(): DateRange {
@@ -1835,6 +1894,70 @@ function ChannelSpuBrandTable({ rows, brand }: { rows: ChannelSkuRow[]; brand: B
   })}</tbody></table></div></>;
 }
 
+const SHOP_METRICS: Array<{ key: ShopMetricKey; label: string }> = [
+  { key: "sales", label: "销售额" },
+  { key: "visitors", label: "访客" },
+  { key: "buyers", label: "买家数" },
+  { key: "newBuyers", label: "新买家数" },
+  { key: "conversion", label: "转化率" },
+  { key: "aov", label: "客单价" },
+];
+
+function formatShopMetric(key: ShopMetricKey, value: number | null) {
+  if (value === null) return "—";
+  if (key === "sales" || key === "aov") return formatMoney(value, key === "sales");
+  if (key === "conversion") return levelPercent(value);
+  return formatNumber(value);
+}
+
+function ShopPage({ rows, brand, currentRange, previousRange, loading, error }: { rows: ShopDailyRow[]; brand: "ALL" | BrandKey; currentRange: DateRange; previousRange: DateRange; loading: boolean; error: string }) {
+  const [trendMetric, setTrendMetric] = useState<ShopMetricKey>("sales");
+  const trendRange = { start: addDays(currentRange.end, -29), end: currentRange.end };
+  const visibleBrands = channelBrandItems(brand);
+  const summaries = visibleBrands.map((item) => ({
+    item,
+    current: aggregateShopRows(shopRowsInRange(rows.filter((row) => row.brand === item.key), currentRange)),
+    previous: aggregateShopRows(shopRowsInRange(rows.filter((row) => row.brand === item.key), previousRange)),
+  }));
+  const trendDates = Array.from({ length: 30 }, (_, index) => addDays(trendRange.start, index));
+  const trendLines = visibleBrands.map((item) => ({
+    item,
+    values: trendDates.map((date) => {
+      const metric = aggregateShopRows(rows.filter((row) => row.brand === item.key && row.date === date));
+      return metric[trendMetric];
+    }),
+  }));
+  const validValues = trendLines.flatMap((line) => line.values).filter((value): value is number => value !== null && Number.isFinite(value));
+  const max = Math.max(1, ...validValues);
+  const pointString = (values: Array<number | null>) => values.map((value, index) => {
+    const x = 30 + index / Math.max(1, trendDates.length - 1) * 840;
+    const y = 220 - ((value || 0) / max * 190);
+    return `${x},${y}`;
+  }).join(" ");
+
+  return <>
+    <section className="data-page shop-page">
+      <div className="section-title"><span>03</span><div><h2>店铺维度数据</h2><p>来自“台灣SP三品牌數據表”的店铺维度每日；金额按运营汇率换算为人民币。</p></div><em>{rangeLabel(currentRange)} · 对比 {rangeLabel(previousRange)}</em></div>
+      {error && <div className="data-alert"><b>店铺数据同步失败</b><span>{error}</span></div>}
+      {loading && rows.length === 0 ? <div className="loading-state"><span className="loading-mark" /><div><strong>正在同步店铺每日数据</strong><p>读取三品牌访客、销售、买家与转化指标</p></div></div> : <>
+        <div className="shop-overview-grid">{summaries.map(({ item, current, previous }) => <article className="shop-brand-card" style={{ "--brand-color": BRAND_COLORS[item.key] } as React.CSSProperties} key={item.key}>
+          <div className="shop-brand-head"><div><b>{item.key}</b><span>{item.name}</span></div><small>环比所选对比区间</small></div>
+          <div className="shop-kpis">{SHOP_METRICS.map((metric) => <div key={metric.key}><span>{metric.label}</span><b>{formatShopMetric(metric.key, current[metric.key])}</b><PanelDelta value={current[metric.key]} previous={previous[metric.key]} mode={metric.key === "conversion" ? "pp" : "ratio"} /></div>)}</div>
+        </article>)}</div>
+      </>}
+    </section>
+    {(!loading || rows.length > 0) && <section className="data-page shop-trend-page">
+      <div className="section-title"><span>30D</span><div><h2>近三十天趋势</h2><p>固定回看截至主日期到的 30 个完整日；可切换六项核心指标。</p></div><em>{rangeLabel(trendRange)}</em></div>
+      <div className="shop-metric-tabs">{SHOP_METRICS.map((metric) => <button type="button" className={trendMetric === metric.key ? "active" : ""} onClick={() => setTrendMetric(metric.key)} key={metric.key}>{metric.label}</button>)}</div>
+      <div className="shop-chart-card">
+        <div className="shop-chart-legend">{trendLines.map(({ item }) => <span style={{ "--brand-color": BRAND_COLORS[item.key] } as React.CSSProperties} key={item.key}><i />{item.key}</span>)}<strong>{SHOP_METRICS.find((item) => item.key === trendMetric)?.label}</strong></div>
+        <div className="shop-chart"><div className="shop-y-axis"><span>{formatShopMetric(trendMetric, max)}</span><span>{formatShopMetric(trendMetric, max / 2)}</span><span>0</span></div><svg viewBox="0 0 900 240" preserveAspectRatio="none" role="img" aria-label={`近三十天${SHOP_METRICS.find((item) => item.key === trendMetric)?.label}趋势`}><line x1="30" y1="30" x2="870" y2="30" /><line x1="30" y1="125" x2="870" y2="125" /><line x1="30" y1="220" x2="870" y2="220" />{trendLines.map(({ item, values }) => <polyline key={item.key} points={pointString(values)} style={{ stroke: BRAND_COLORS[item.key] }} />)}</svg></div>
+        <div className="shop-x-axis">{trendDates.map((date, index) => index % 5 === 0 || index === trendDates.length - 1 ? <span style={{ left: `${index / Math.max(1, trendDates.length - 1) * 100}%` }} key={date}>{dateLabel(date)}</span> : null)}</div>
+      </div>
+    </section>}
+  </>;
+}
+
 function DataSourceLinks() {
   return <details className="source-panel" open>
     <summary>数据源路径</summary>
@@ -1869,6 +1992,9 @@ export function SalesDashboard() {
   const [channelData, setChannelData] = useState<ChannelData>({ rows: [] });
   const [channelLoading, setChannelLoading] = useState(false);
   const [channelError, setChannelError] = useState("");
+  const [shopRows, setShopRows] = useState<ShopDailyRow[]>([]);
+  const [shopLoading, setShopLoading] = useState(false);
+  const [shopError, setShopError] = useState("");
   const [offsiteRows, setOffsiteRows] = useState<OffsiteRow[]>([]);
   const [offsiteLoading, setOffsiteLoading] = useState(false);
   const [offsiteError, setOffsiteError] = useState("");
@@ -1898,6 +2024,23 @@ export function SalesDashboard() {
       .then((result) => { if (!cancelled) setChannelData(result); })
       .catch((reason) => { if (!cancelled) setChannelError(reason instanceof Error ? reason.message : "线上线下销量同步失败"); })
       .finally(() => { if (!cancelled) setChannelLoading(false); });
+    return () => { cancelled = true; };
+  }, [currentRange, previousRange, refresh, unlocked, page]);
+
+  useEffect(() => {
+    if (!unlocked || page !== "shops") return;
+    let cancelled = false;
+    const trendStart = addDays(currentRange.end, -29);
+    const fetchRange = {
+      start: [currentRange.start, previousRange.start, trendStart].sort()[0],
+      end: [currentRange.end, previousRange.end].sort().at(-1) || currentRange.end,
+    };
+    setShopLoading(true);
+    setShopError("");
+    loadShopDailyData(fetchRange)
+      .then((result) => { if (!cancelled) setShopRows(result); })
+      .catch((reason) => { if (!cancelled) setShopError(reason instanceof Error ? reason.message : "店铺数据同步失败"); })
+      .finally(() => { if (!cancelled) setShopLoading(false); });
     return () => { cancelled = true; };
   }, [currentRange, previousRange, refresh, unlocked, page]);
 
@@ -1982,12 +2125,13 @@ export function SalesDashboard() {
   const comparisonLabel = `环比 ${rangeLabel(previousRange)}`;
   return <main className="dashboard">
     <div className="currency-note"><span>金额单位：人民币 CNY</span><small>源表 TWD 金额按运营口径 1 TWD = 0.21 CNY 换算；目标值保持人民币</small></div>
-    <div className="dashboard-layout"><aside className="side-nav"><div className="side-brand"><span>TW / SP</span><b>品牌分析室</b></div><p className="side-label">看板入口</p><button className={brand === "ALL" && page === "overview" ? "active" : ""} onClick={() => { setBrand("ALL"); setPage("overview"); }}><strong>总览</strong><small>三品牌经营总览</small></button>{BRANDS.map((item) => <button key={item.key} style={{ "--brand-color": BRAND_COLORS[item.key] } as React.CSSProperties} className={brand === item.key && page === "overview" ? "active" : ""} onClick={() => { setBrand(item.key); setPage("overview"); }}><strong>{item.key}</strong><small>{item.name}</small></button>)}<div className="side-divider" /><button className={page === "channels" ? "active" : ""} onClick={() => { setBrand("ALL"); setPage("channels"); }}><strong>线上 / 线下 SKU</strong><small>销量环比与差距</small></button><div className="side-divider" /><DataSourceLinks /></aside><div className="dashboard-content">
+    <div className="dashboard-layout"><aside className="side-nav"><div className="side-brand"><span>TW / SP</span><b>品牌分析室</b></div><p className="side-label">看板入口</p><button className={brand === "ALL" && page === "overview" ? "active" : ""} onClick={() => { setBrand("ALL"); setPage("overview"); }}><strong>总览</strong><small>三品牌经营总览</small></button>{BRANDS.map((item) => <button key={item.key} style={{ "--brand-color": BRAND_COLORS[item.key] } as React.CSSProperties} className={brand === item.key && page === "overview" ? "active" : ""} onClick={() => { setBrand(item.key); setPage("overview"); }}><strong>{item.key}</strong><small>{item.name}</small></button>)}<div className="side-divider" /><button className={page === "shops" ? "active" : ""} onClick={() => { setBrand("ALL"); setPage("shops"); }}><strong>店铺维度数据</strong><small>访客、销售与转化</small></button><button className={page === "channels" ? "active" : ""} onClick={() => { setBrand("ALL"); setPage("channels"); }}><strong>线上 / 线下 SKU</strong><small>销量环比与差距</small></button><div className="side-divider" /><DataSourceLinks /></aside><div className="dashboard-content">
     <header className="topbar"><div><p className="eyebrow">SALES & COST EFFICIENCY</p><h1>台湾线上销售分析</h1><p className="subtitle">聚焦费用投入对 GMV 的影响 · SKT / G2G / TP · {rangeLabel(currentRange)} 对比 {rangeLabel(previousRange)}</p></div><button className="primary-button" onClick={() => setRefresh((value) => value + 1)}>＋ 更新销售数据</button></header>
     <section className="filter-bar"><div><label>品牌</label><select value={brand} onChange={(event) => setBrand(event.target.value as "ALL" | BrandKey)}><option value="ALL">全部品牌</option>{BRANDS.map((item) => <option value={item.key} key={item.key}>{item.key} · {item.name}</option>)}</select></div><div><label>主日期从</label><input type="date" value={currentRange.start} onChange={(event) => setCurrentRange((value) => ({ ...value, start: event.target.value }))} /></div><div><label>主日期到</label><input type="date" value={currentRange.end} onChange={(event) => setCurrentRange((value) => ({ ...value, end: event.target.value }))} /></div><div><label>环比日期从</label><input type="date" value={previousRange.start} onChange={(event) => setPreviousRange((value) => ({ ...value, start: event.target.value }))} /></div><div><label>环比日期到</label><input type="date" value={previousRange.end} onChange={(event) => setPreviousRange((value) => ({ ...value, end: event.target.value }))} /></div><div><label>商品ID / ID</label><input value={productId} onChange={(event) => setProductId(event.target.value)} placeholder="输入商品ID / ID" /></div><div><label>产品名</label><input value={product} onChange={(event) => setProduct(event.target.value)} placeholder="搜索产品名" /></div><div><label>品类</label><select value={category} onChange={(event) => setCategory(event.target.value)}><option value="">全部品类</option>{options.categories.map((item) => <option key={item}>{item}</option>)}</select></div><button className="reset-button" onClick={resetFilters}>重置筛选</button></section>
-    <nav className="page-tabs">{PAGE_LABELS.map((item) => <button key={item.key} className={page === item.key ? "active" : ""} onClick={() => setPage(item.key)}><b>{item.number}</b><span>{item.label}</span><small>{item.note}</small></button>)}<span className="sync-state"><i className={error || offsiteError ? "error-dot" : ""} />{loading || offsiteLoading ? "同步中" : "数据已同步"}</span></nav>
+    <nav className="page-tabs">{PAGE_LABELS.map((item) => <button key={item.key} className={page === item.key ? "active" : ""} onClick={() => setPage(item.key)}><b>{item.number}</b><span>{item.label}</span><small>{item.note}</small></button>)}<span className="sync-state"><i className={error || offsiteError || shopError ? "error-dot" : ""} />{loading || offsiteLoading || shopLoading ? "同步中" : "数据已同步"}</span></nav>
     {error && <div className="data-alert"><b>数据同步失败</b><span>{error}</span><button onClick={() => setRefresh((value) => value + 1)}>重新同步</button></div>}
     {offsiteError && <div className="data-alert"><b>站外广告数据同步失败</b><span>{offsiteError}</span><button onClick={() => setRefresh((value) => value + 1)}>重新同步</button></div>}
+    {page === "shops" && <ShopPage rows={shopRows} brand={brand} currentRange={currentRange} previousRange={previousRange} loading={shopLoading} error={shopError} />}
     {page === "channels" ? <><ChannelSummary rows={channelData.rows} /><section className="data-page channel-page"><div className="section-title"><span>07</span><div><h2>线上 / 线下 SKU 销量对比</h2><p>线上数据来自台湾线上 SKU 销量表；线下汇总三品牌各通路原始 SKU 销量；07 独立按 SKU 匹配到 SPU 与品类，不影响链接明细和品类进度。</p></div><em>{channelLoading ? "同步中" : `${channelData.rows.length} 个SKU`}</em></div>{channelError && <div className="data-alert"><b>销量数据同步失败</b><span>{channelError}</span></div>}{channelLoading && channelData.rows.length === 0 ? <div className="loading-state"><span className="loading-mark" /><div><strong>正在同步线上与线下 SKU 销量</strong><p>按主日期范围和环比日期范围汇总 SKU，再映射到 SPU</p></div></div> : <><div className="channel-subsection"><div><h3>品类销量对比</h3><p>先看各品牌品类层级的线上、线下差距与倍数。</p></div></div><ChannelCategoryTable rows={channelData.rows} brand={brand} /><div className="channel-subsection sku-subsection"><div><h3>SPU 销量明细</h3><p>默认按 SPU 汇总；展开后查看 SKU 码和 SKU 名。</p></div></div><ChannelSpuTable rows={channelData.rows} brand={brand} /></>}</section></> : loading && data.length === 0 ? <div className="loading-state"><span className="loading-mark" /><div><strong>正在同步销售与广告数据</strong><p>读取三品牌的店铺、链接、商品ID和广告明细</p></div></div> : <>
       {page === "overview" && <>
         <section className="metric-grid"><MetricCard label="累计 GMV" value={formatMoney(total.gmv, true)} delta={ratio(total.gmv, total.previous)} note={`DMS折后实收 · 环比区间 ${formatMoney(total.previous, true)}`} color="#2364d8" /><MetricCard label="目标 GMV 达成" value={levelPercent(total.goal > 0 ? total.gmv / total.goal : null)} delta={total.goal > 0 ? (total.gmv - total.previous) / total.goal : null} deltaMode="pp" note={`目标 ${formatMoney(total.goal, true)}`} color="#ff766b" /><MetricCard label="综合费比" value={levelPercent(total.gmv > 0 ? totalAdCost / total.gmv : null)} delta={(total.gmv > 0 && total.previous > 0) ? totalAdCost / total.gmv - previousTotalAdCost / total.previous : null} deltaMode="pp" note="总花费 / DMS GMV" color="#1ba89c" /><MetricCard label="综合 ROI" value={rate(totalRoi)} delta={ratio(totalRoi, previousTotalRoi || 0)} note="DMS GMV / 总花费" color="#8d7bd8" /></section>
@@ -2003,7 +2147,7 @@ export function SalesDashboard() {
         </>}
       </>}
       {page === "offsite" && <section className="data-page"><div className="section-title"><span>05</span><div><h2>站外广告数据</h2><p>经营数据按商品ID / ID回填现有链接明细；广告数据来自三品牌站外投放源表。</p></div><em>{offsiteLoading ? "同步中" : `${filteredOffsiteRows.length} 条明细`}</em></div>{offsiteLoading && offsiteRows.length === 0 ? <div className="loading-state"><span className="loading-mark" /><div><strong>正在同步站外广告数据</strong><p>读取站外投放表和产品 map</p></div></div> : <OffsiteTable rows={filteredOffsiteRows} />}</section>}
-      {page !== "overview" && page !== "channels" && page !== "offsite" && <section className="data-page"><div className="section-title"><span>{currentPage.number}</span><div><h2>{currentPage.label}</h2><p>{currentPage.note} · 已应用品牌、日期范围、商品ID、产品名和品类筛选。</p></div><em>{visible.reduce((sum, item) => sum + (page === "category" ? item.category.length : page === "link" ? item.links.length : item.ads.length), 0)} 条明细</em></div><Table rows={rowsFor(page)} type={page} offsiteRows={offsiteRows} /></section>}
+      {page !== "overview" && page !== "shops" && page !== "channels" && page !== "offsite" && <section className="data-page"><div className="section-title"><span>{currentPage.number}</span><div><h2>{currentPage.label}</h2><p>{currentPage.note} · 已应用品牌、日期范围、商品ID、产品名和品类筛选。</p></div><em>{visible.reduce((sum, item) => sum + (page === "category" ? item.category.length : page === "link" ? item.links.length : item.ads.length), 0)} 条明细</em></div><Table rows={rowsFor(page)} type={page} offsiteRows={offsiteRows} /></section>}
     </>}
     <footer><span>数据源：台湾 SP 三品牌数据表</span><span>综合费比 / 综合 ROI 已按站内广告 + 站外广告总费用计算</span></footer>
     </div></div>
