@@ -136,7 +136,7 @@ type ChannelSpuRow = {
 };
 
 type ChannelData = { rows: ChannelSkuRow[] };
-type OffsiteConfig = { brand: BrandKey; spreadsheetId: string; gid: number; date: string; spend: string; impressions: string; clicks: string; purchaseValue: string; productName: string; category: string; typeColumns: string[] };
+type OffsiteConfig = { brand: BrandKey; spreadsheetId: string; gid: number; sheet: string; date: string; spend: string; impressions: string; clicks: string; purchaseValue: string; productName: string; category: string; typeColumns: string[] };
 type OffsiteMapRecord = { brand: BrandKey; id: string; link: string; category: string };
 type OffsiteApiRow = {
   brand: BrandKey;
@@ -202,9 +202,9 @@ const OFFSITE_API_URL = "https://tw-offsite-api-26k2ltlrsq-de.a.run.app";
 const MAPPING_GID = 1668472749;
 const MAINTAINED_MAPPING_GID = 305051712;
 const OFFSITE_CONFIGS: OffsiteConfig[] = [
-  { brand: "G2G", spreadsheetId: "1ptzr5wSndXdxAG3kCUvIJ9rhTDz5-SYdG0Rd8rFcsYk", gid: 0, date: "D", spend: "E", impressions: "F", clicks: "G", purchaseValue: "I", productName: "AC", category: "AD", typeColumns: ["N", "R", "U", "V", "W", "Y", "Z", "AE", "AF"] },
-  { brand: "SKT", spreadsheetId: "1gt-oypX44RAr2Kis-pdfXfa0k-UbVNeZAg1zIcGwBs4", gid: 702107027, date: "I", spend: "C", impressions: "D", clicks: "E", purchaseValue: "F", productName: "Z", category: "Y", typeColumns: ["O", "R", "X", "Y", "AA"] },
-  { brand: "TP", spreadsheetId: "1ZEvZNIULKovBaGvXC3v6jeIl_l5VDlXWkI4RhLPd7kg", gid: 1346236884, date: "A", spend: "F", impressions: "K", clicks: "L", purchaseValue: "G", productName: "Y", category: "Z", typeColumns: ["O", "R", "U", "X"] },
+  { brand: "G2G", spreadsheetId: "1ptzr5wSndXdxAG3kCUvIJ9rhTDz5-SYdG0Rd8rFcsYk", gid: 0, sheet: "2025广告数据源", date: "D", spend: "E", impressions: "F", clicks: "G", purchaseValue: "I", productName: "AC", category: "AD", typeColumns: ["N", "R", "U", "V", "W", "Y", "Z", "AE", "AF"] },
+  { brand: "SKT", spreadsheetId: "1gt-oypX44RAr2Kis-pdfXfa0k-UbVNeZAg1zIcGwBs4", gid: 702107027, sheet: "广告数据源汇总", date: "I", spend: "C", impressions: "D", clicks: "E", purchaseValue: "F", productName: "Z", category: "Y", typeColumns: ["O", "R", "X", "Y", "AA"] },
+  { brand: "TP", spreadsheetId: "1ZEvZNIULKovBaGvXC3v6jeIl_l5VDlXWkI4RhLPd7kg", gid: 1346236884, sheet: "广告数据源", date: "A", spend: "F", impressions: "K", clicks: "L", purchaseValue: "G", productName: "Y", category: "Z", typeColumns: ["O", "R", "U", "X"] },
 ];
 
 const sheetUrl = (spreadsheetId: string, gid?: number | string) =>
@@ -558,17 +558,37 @@ async function loadSheetCsv(gid: number, spreadsheetId = SHEET_ID) {
   return promise;
 }
 
-async function loadLocalCsv(path: string) {
-  const key = `local:${path}`;
-  if (csvInFlight.has(key)) return csvInFlight.get(key)!;
-  const promise = fetch(path, { cache: "no-store" })
-    .then(async (response) => {
-      if (!response.ok) throw new Error(`站外缓存文件读取失败（${response.status}）`);
-      return parseCsvMatrix(await response.text());
-    })
-    .finally(() => csvInFlight.delete(key));
-  csvInFlight.set(key, promise);
-  return promise;
+function gvizRowsToCsvMatrix(rows: GvizRow[], columns: string[]) {
+  const width = Math.max(...columns.map(columnIndex)) + 1;
+  return [Array(width).fill(""), ...rows.map((row) => {
+    const output = Array(width).fill("");
+    columns.forEach((column, index) => {
+      const cell = row.c?.[index];
+      output[columnIndex(column)] = String(cell?.v ?? cell?.f ?? "");
+    });
+    return output;
+  })];
+}
+
+async function loadOffsiteSourceRows(config: OffsiteConfig, start: string, end: string) {
+  const columns = [...new Set([config.date, config.spend, config.impressions, config.clicks, config.purchaseValue, config.productName, config.category, ...config.typeColumns])];
+  const rows = await querySheet(config.sheet, `select ${columns.join(",")} where ${dateWhere(config.date, start, end)}`, config.spreadsheetId);
+  return gvizRowsToCsvMatrix(rows, columns);
+}
+
+async function loadOffsiteProductMapRows() {
+  const blocks = [
+    { columns: ["A", "B", "C", "D"], linkColumn: "C" },
+    { columns: ["F", "G", "H", "I"], linkColumn: "H" },
+    { columns: ["K", "L", "M", "N", "O"], linkColumn: "M" },
+  ];
+  const result = [Array(15).fill("")];
+  const blockRows = await Promise.all(blocks.map((block) => querySheet("产品map", `select ${block.columns.join(",")} where ${block.linkColumn} is not null`, OFFSITE_PRODUCT_MAP_SHEET_ID)));
+  blockRows.forEach((rows, blockIndex) => {
+    const columns = blocks[blockIndex].columns;
+    gvizRowsToCsvMatrix(rows, columns).slice(1).forEach((row) => result.push(row));
+  });
+  return result;
 }
 
 function columnIndex(column: string) {
@@ -1065,11 +1085,11 @@ async function loadOffsiteData(period: DateRange, previousPeriod: DateRange, bra
   } catch (error) {
     console.warn("站外 API 无法覆盖当前区间，改读 Google Sheet", error);
   }
+  const sourceStart = previousPeriod.start < period.start ? previousPeriod.start : period.start;
+  const sourceEnd = previousPeriod.end > period.end ? previousPeriod.end : period.end;
   const [productMapRows, ...sourceRows] = await Promise.all([
-    loadLocalCsv("/offsite_product_map.csv"),
-    loadLocalCsv("/offsite_g2g.csv"),
-    loadLocalCsv("/offsite_skt.csv"),
-    loadLocalCsv("/offsite_tp.csv"),
+    loadOffsiteProductMapRows(),
+    ...OFFSITE_CONFIGS.map((config) => loadOffsiteSourceRows(config, sourceStart, sourceEnd)),
   ]);
   const productMap = indexOffsiteProductMap(productMapRows);
   const linkById = new Map<string, MetricRow>();
