@@ -1088,8 +1088,14 @@ async function loadOffsiteData(period: DateRange, previousPeriod: DateRange, bra
   const sourceStart = previousPeriod.start < period.start ? previousPeriod.start : period.start;
   const sourceEnd = previousPeriod.end > period.end ? previousPeriod.end : period.end;
   const [productMapRows, ...sourceRows] = await Promise.all([
-    loadOffsiteProductMapRows(),
-    ...OFFSITE_CONFIGS.map((config) => loadOffsiteSourceRows(config, sourceStart, sourceEnd)),
+    loadOffsiteProductMapRows().catch((error) => {
+      console.warn("站外产品映射读取失败，继续使用源表名称", error);
+      return [Array(15).fill("")];
+    }),
+    ...OFFSITE_CONFIGS.map((config) => loadOffsiteSourceRows(config, sourceStart, sourceEnd).catch((error) => {
+      console.warn(`${config.brand} 站外源表读取失败`, error);
+      return [Array(1).fill("")];
+    })),
   ]);
   const productMap = indexOffsiteProductMap(productMapRows);
   const linkById = new Map<string, MetricRow>();
