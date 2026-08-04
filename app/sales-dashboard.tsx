@@ -558,6 +558,19 @@ async function loadSheetCsv(gid: number, spreadsheetId = SHEET_ID) {
   return promise;
 }
 
+async function loadLocalCsv(path: string) {
+  const key = `local:${path}`;
+  if (csvInFlight.has(key)) return csvInFlight.get(key)!;
+  const promise = fetch(path, { cache: "no-store" })
+    .then(async (response) => {
+      if (!response.ok) throw new Error(`站外缓存文件读取失败（${response.status}）`);
+      return parseCsvMatrix(await response.text());
+    })
+    .finally(() => csvInFlight.delete(key));
+  csvInFlight.set(key, promise);
+  return promise;
+}
+
 function columnIndex(column: string) {
   return column.toUpperCase().split("").reduce((sum, char) => sum * 26 + char.charCodeAt(0) - 64, 0) - 1;
 }
@@ -1053,8 +1066,10 @@ async function loadOffsiteData(period: DateRange, previousPeriod: DateRange, bra
     console.warn("站外 API 无法覆盖当前区间，改读 Google Sheet", error);
   }
   const [productMapRows, ...sourceRows] = await Promise.all([
-    loadSheetCsv(OFFSITE_PRODUCT_MAP_GID, OFFSITE_PRODUCT_MAP_SHEET_ID),
-    ...OFFSITE_CONFIGS.map((config) => loadSheetCsv(config.gid, config.spreadsheetId)),
+    loadLocalCsv("/offsite_product_map.csv"),
+    loadLocalCsv("/offsite_g2g.csv"),
+    loadLocalCsv("/offsite_skt.csv"),
+    loadLocalCsv("/offsite_tp.csv"),
   ]);
   const productMap = indexOffsiteProductMap(productMapRows);
   const linkById = new Map<string, MetricRow>();
