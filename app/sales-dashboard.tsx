@@ -1119,10 +1119,10 @@ async function loadOffsiteData(period: DateRange, previousPeriod: DateRange, bra
         const link = isMixed ? "混合目录" : mapped?.link || linkFromSales?.product || sourceName;
         const category = isMixed ? "" : mapped?.category || linkFromSales?.category || normalizeCategory(csvStringAt(row, config.category) || FALLBACK_CATEGORY);
         const key = `${config.brand}:${isMixed ? "mixed" : id || normalizeLookupText(link) || rowIndex}`;
-        const spend = csvNumberAt(row, config.spend) * exchangeRate;
+        const spend = csvNumberAt(row, config.spend);
         const impressions = csvNumberAt(row, config.impressions);
         const clicks = csvNumberAt(row, config.clicks);
-        const purchaseValue = csvNumberAt(row, config.purchaseValue) * exchangeRate;
+        const purchaseValue = csvNumberAt(row, config.purchaseValue);
         const type = classifyOffsiteSpend(row, config);
         const existing = groups.get(key) || {
           key,
