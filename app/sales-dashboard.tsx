@@ -4,6 +4,7 @@ import { Fragment, FormEvent, useEffect, useMemo, useState } from "react";
 
 const SHEET_ID = "1yuJxg2PFQgAiOjnnCZVutQm-4I1q376c8eXZOjWQLN8";
 const DEFAULT_TWD_TO_CNY = 0.21;
+const OFFSITE_USD_TO_CNY = 7.2;
 const PASSWORD_HASH =
   "04155b15a8f39ef5739243f83ea8350c4394a2b630f2af8c26cc4972af72c21c";
 const csvInFlight = new Map<string, Promise<string[][]>>();
@@ -149,7 +150,7 @@ type ShopDailyRow = {
 type ShopMetric = Omit<ShopDailyRow, "brand" | "date"> & { conversion: number | null; aov: number | null };
 type ShopMetricKey = "sales" | "visitors" | "buyers" | "newBuyers" | "conversion" | "aov";
 type ShopDailyConfig = { brand: BrandKey; sheet: string; date: string; sales: string; orders: string; pageviews: string; visitors: string; buyers: string; newBuyers: string };
-type OffsiteConfig = { brand: BrandKey; spreadsheetId: string; gid: number; sheet: string; date: string; spend: string; impressions: string; clicks: string; purchaseValue: string; productName: string; category: string; typeColumns: string[] };
+type OffsiteConfig = { brand: BrandKey; spreadsheetId: string; gid: number; sheet: string; date: string; spend: string; impressions: string; clicks: string; purchaseValue: string; productName: string; category: string; typeColumns: string[]; store?: string };
 type OffsiteMapRecord = { brand: BrandKey; id: string; link: string; category: string };
 type OffsiteApiRow = {
   brand: BrandKey;
@@ -222,8 +223,8 @@ const OFFSITE_API_URL = "https://tw-offsite-api-26k2ltlrsq-de.a.run.app";
 const MAPPING_GID = 1668472749;
 const MAINTAINED_MAPPING_GID = 305051712;
 const OFFSITE_CONFIGS: OffsiteConfig[] = [
-  { brand: "G2G", spreadsheetId: "1ptzr5wSndXdxAG3kCUvIJ9rhTDz5-SYdG0Rd8rFcsYk", gid: 0, sheet: "2025广告数据源", date: "D", spend: "E", impressions: "F", clicks: "G", purchaseValue: "I", productName: "AC", category: "AD", typeColumns: ["N", "R", "U", "V", "W", "Y", "Z", "AE", "AF"] },
-  { brand: "SKT", spreadsheetId: "1gt-oypX44RAr2Kis-pdfXfa0k-UbVNeZAg1zIcGwBs4", gid: 702107027, sheet: "广告数据源汇总", date: "I", spend: "C", impressions: "D", clicks: "E", purchaseValue: "F", productName: "Z", category: "Y", typeColumns: ["O", "R", "X", "Y", "AA"] },
+  { brand: "G2G", spreadsheetId: "1ptzr5wSndXdxAG3kCUvIJ9rhTDz5-SYdG0Rd8rFcsYk", gid: 0, sheet: "2025广告数据源", date: "D", spend: "E", impressions: "F", clicks: "G", purchaseValue: "I", productName: "AC", category: "AD", typeColumns: ["N", "R", "U", "V", "W", "Y", "Z", "AE", "AF"], store: "M" },
+  { brand: "SKT", spreadsheetId: "1gt-oypX44RAr2Kis-pdfXfa0k-UbVNeZAg1zIcGwBs4", gid: 702107027, sheet: "广告数据源汇总", date: "I", spend: "C", impressions: "D", clicks: "E", purchaseValue: "F", productName: "Z", category: "Y", typeColumns: ["O", "R", "X", "Y", "AA"], store: "N" },
   { brand: "TP", spreadsheetId: "1ZEvZNIULKovBaGvXC3v6jeIl_l5VDlXWkI4RhLPd7kg", gid: 1346236884, sheet: "广告数据源", date: "A", spend: "F", impressions: "K", clicks: "L", purchaseValue: "G", productName: "Y", category: "Z", typeColumns: ["O", "R", "U", "X"] },
 ];
 
@@ -480,6 +481,14 @@ function classifyOffsiteSpend(row: string[], config: OffsiteConfig) {
   return "graphic";
 }
 
+function isLocalShopeeStore(row: string[], config: OffsiteConfig) {
+  if (!config.store) return true;
+  const store = csvStringAt(row, config.store);
+  if (!store) return false;
+  if (/跨境|海外|momo|pchome|watsons|屈臣氏|康是美/i.test(store)) return false;
+  return /本土店|shopee|虾皮|蝦皮|旗舰店|旗艦店/i.test(store);
+}
+
 function addMetric(target: MetricRow, source: MetricRow) {
   const keys = ["gmv", "previousGmv", "orders", "previousOrders", "exposure", "previousExposure", "clicks", "previousClicks", "visitors", "previousVisitors", "search", "previousSearch", "cart", "previousCart", "units", "previousUnits", "adGmv", "previousAdGmv", "adSpend", "previousAdSpend", "adExposure", "previousAdExposure", "adClicks", "previousAdClicks", "conversions", "previousConversions"] as const;
   keys.forEach((key) => { target[key] += source[key]; });
@@ -591,7 +600,7 @@ function gvizRowsToCsvMatrix(rows: GvizRow[], columns: string[]) {
 }
 
 async function loadOffsiteSourceRows(config: OffsiteConfig, start: string, end: string) {
-  const columns = [...new Set([config.date, config.spend, config.impressions, config.clicks, config.purchaseValue, config.productName, config.category, ...config.typeColumns])];
+  const columns = [...new Set([config.date, config.spend, config.impressions, config.clicks, config.purchaseValue, config.productName, config.category, config.store, ...config.typeColumns].filter(Boolean) as string[])];
   const rows = await querySheet(config.sheet, `select ${columns.join(",")} where ${dateWhere(config.date, start, end)}`, config.spreadsheetId);
   return gvizRowsToCsvMatrix(rows, columns);
 }
@@ -1016,8 +1025,10 @@ async function loadBrand(config: BrandConfig, period: DateRange, previousPeriod:
   } satisfies BrandData;
 }
 
-async function loadOffsiteData(period: DateRange, previousPeriod: DateRange, brands: BrandData[], exchangeRate = DEFAULT_TWD_TO_CNY) {
-  try {
+async function loadOffsiteData(period: DateRange, previousPeriod: DateRange, brands: BrandData[]) {
+  const shouldUseOffsiteApi = false;
+  if (shouldUseOffsiteApi) {
+    try {
     const fetchRows = async (range: DateRange) => {
       const url = new URL(`${OFFSITE_API_URL}/offsite`);
       url.searchParams.set("start", range.start);
@@ -1145,8 +1156,9 @@ async function loadOffsiteData(period: DateRange, previousPeriod: DateRange, bra
       groups.set(key, existing);
     });
     return [...groups.values()].sort((left, right) => (right.spend - left.spend) || (right.previousSpend - left.previousSpend));
-  } catch (error) {
-    console.warn("站外 API 无法覆盖当前区间，改读 Google Sheet", error);
+    } catch (error) {
+      console.warn("站外 API 无法覆盖当前区间，改读 Google Sheet", error);
+    }
   }
   const sourceStart = previousPeriod.start < period.start ? previousPeriod.start : period.start;
   const sourceEnd = previousPeriod.end > period.end ? previousPeriod.end : period.end;
@@ -1174,6 +1186,7 @@ async function loadOffsiteData(period: DateRange, previousPeriod: DateRange, bra
   const addSheetRange = (range: DateRange, previous: boolean) => {
     OFFSITE_CONFIGS.forEach((config, configIndex) => {
       csvRowsInRange(sourceRows[configIndex], config.date, range.start, range.end).forEach((row, rowIndex) => {
+        if (!isLocalShopeeStore(row, config)) return;
         const sourceName = csvStringAt(row, config.productName) || csvStringAt(row, config.category) || "未填写";
         const isMixed = /混合目录|混合目錄/i.test(sourceName);
         const mapped = isMixed ? null : findOffsiteMapRecord(productMap, config.brand, sourceName);
@@ -1182,10 +1195,10 @@ async function loadOffsiteData(period: DateRange, previousPeriod: DateRange, bra
         const link = isMixed ? "混合目录" : mapped?.link || linkFromSales?.product || sourceName;
         const category = isMixed ? "" : mapped?.category || linkFromSales?.category || normalizeCategory(csvStringAt(row, config.category) || FALLBACK_CATEGORY);
         const key = `${config.brand}:${isMixed ? "mixed" : id || normalizeLookupText(link) || rowIndex}`;
-        const spend = csvNumberAt(row, config.spend);
+        const spend = csvNumberAt(row, config.spend) * OFFSITE_USD_TO_CNY;
         const impressions = csvNumberAt(row, config.impressions);
         const clicks = csvNumberAt(row, config.clicks);
-        const purchaseValue = csvNumberAt(row, config.purchaseValue);
+        const purchaseValue = csvNumberAt(row, config.purchaseValue) * OFFSITE_USD_TO_CNY;
         const type = classifyOffsiteSpend(row, config);
         const existing = groups.get(key) || {
           key,
@@ -1652,6 +1665,7 @@ function OffsiteTable({ rows }: { rows: OffsiteRow[] }) {
     { key: "linkGmv", label: "链接GMV", value: (row) => row.linkGmv },
     { key: "linkVisitors", label: "链接访客", value: (row) => row.linkVisitors },
     { key: "spend", label: "站外花费", value: (row) => row.spend },
+    { key: "nonBrandSpend", label: "站外花费（除品牌）", value: (row) => row.coCreateSpend + row.graphicSpend },
     { key: "impressions", label: "曝光", value: (row) => row.impressions },
     { key: "clicks", label: "点击量", value: (row) => row.clicks },
     { key: "purchaseValue", label: "成交金额", value: (row) => row.purchaseValue },
@@ -1666,8 +1680,10 @@ function OffsiteTable({ rows }: { rows: OffsiteRow[] }) {
   });
   const sortBy = (column: SortColumn<OffsiteRow>) => setSort((current) => current.key === column.key ? { key: column.key, direction: current.direction === "asc" ? "desc" : "asc" } : { key: column.key, direction: column.defaultDirection || "desc" });
   const exportOffsiteRows = () => {
-    const headers = ["品牌", "类目", "链接简称", "商品ID / ID", "链接GMV", "链接GMV环比", "链接访客", "链接访客环比", "站外花费", "站外花费环比", "曝光", "曝光环比", "点击量", "点击量环比", "成交金额", "成交金额环比", "合创占比", "合创占比变化", "图文占比", "图文占比变化", "品牌广告占比", "品牌广告占比变化"];
+    const headers = ["品牌", "类目", "链接简称", "商品ID / ID", "链接GMV", "链接GMV环比", "链接访客", "链接访客环比", "站外花费", "站外花费环比", "站外花费（除品牌）", "站外花费（除品牌）环比", "曝光", "曝光环比", "点击量", "点击量环比", "成交金额", "成交金额环比", "合创占比", "合创占比变化", "图文占比", "图文占比变化", "品牌广告占比", "品牌广告占比变化"];
     const exportRows = sorted.map((row) => {
+      const nonBrandSpend = row.coCreateSpend + row.graphicSpend;
+      const previousNonBrandSpend = row.previousCoCreateSpend + row.previousGraphicSpend;
       const coCreateShare = share(row.coCreateSpend, row.spend);
       const previousCoCreateShare = share(row.previousCoCreateSpend, row.previousSpend);
       const graphicShare = share(row.graphicSpend, row.spend);
@@ -1685,6 +1701,8 @@ function OffsiteTable({ rows }: { rows: OffsiteRow[] }) {
         deltaText(row.linkVisitors, row.previousLinkVisitors),
         formatMoney(row.spend, true),
         deltaText(row.spend, row.previousSpend),
+        formatMoney(nonBrandSpend, true),
+        deltaText(nonBrandSpend, previousNonBrandSpend),
         formatNumber(row.impressions),
         deltaText(row.impressions, row.previousImpressions),
         formatNumber(row.clicks),
@@ -1701,14 +1719,16 @@ function OffsiteTable({ rows }: { rows: OffsiteRow[] }) {
     });
     exportExcel("台湾线上销售分析-站外广告数据", "站外广告数据", headers, exportRows);
   };
-  return <><TableExportButton label="导出 Excel" onClick={exportOffsiteRows} count={sorted.length} /><div className="table-wrap offsite-table"><table><colgroup><col className="offsite-category-col" /><col className="offsite-link-col" /><col className="offsite-metric-col" /><col className="offsite-metric-col" /><col className="offsite-metric-col" /><col className="offsite-metric-col" /><col className="offsite-metric-col" /><col className="offsite-metric-col" /><col className="offsite-share-col" /><col className="offsite-share-col" /><col className="offsite-share-col" /></colgroup><thead><tr className="group-head"><th colSpan={4}>经营数据</th><th colSpan={4}>广告数据</th><th colSpan={3}>消耗占比</th></tr><tr>{columns.map((column) => <SortableHeader key={column.key} label={column.label} active={sort.key === column.key} direction={sort.direction} onClick={() => sortBy(column)} />)}</tr></thead><tbody>{sorted.length === 0 ? <tr><td colSpan={11}>暂无站外广告数据</td></tr> : sorted.map((row) => {
+  return <><TableExportButton label="导出 Excel" onClick={exportOffsiteRows} count={sorted.length} /><div className="table-wrap offsite-table"><table><colgroup><col className="offsite-category-col" /><col className="offsite-link-col" /><col className="offsite-metric-col" /><col className="offsite-metric-col" /><col className="offsite-metric-col" /><col className="offsite-metric-col" /><col className="offsite-metric-col" /><col className="offsite-metric-col" /><col className="offsite-metric-col" /><col className="offsite-share-col" /><col className="offsite-share-col" /><col className="offsite-share-col" /></colgroup><thead><tr className="group-head"><th colSpan={4}>经营数据</th><th colSpan={5}>广告数据</th><th colSpan={3}>消耗占比</th></tr><tr>{columns.map((column) => <SortableHeader key={column.key} label={column.label} active={sort.key === column.key} direction={sort.direction} onClick={() => sortBy(column)} />)}</tr></thead><tbody>{sorted.length === 0 ? <tr><td colSpan={12}>暂无站外广告数据</td></tr> : sorted.map((row) => {
+    const nonBrandSpend = row.coCreateSpend + row.graphicSpend;
+    const previousNonBrandSpend = row.previousCoCreateSpend + row.previousGraphicSpend;
     const coCreateShare = share(row.coCreateSpend, row.spend);
     const previousCoCreateShare = share(row.previousCoCreateSpend, row.previousSpend);
     const graphicShare = share(row.graphicSpend, row.spend);
     const previousGraphicShare = share(row.previousGraphicSpend, row.previousSpend);
     const brandAdShare = share(row.brandAdSpend, row.spend);
     const previousBrandAdShare = share(row.previousBrandAdSpend, row.previousSpend);
-    return <tr key={row.key}><td><b>{row.category || "—"}</b><small style={{ color: BRAND_COLORS[row.brand] }}>{row.brand}</small></td><td className="primary-cell"><b title={row.link}>{row.link}</b><small>{row.id || "混合目录"}</small></td><MetricCell value={row.linkGmv} previous={row.previousLinkGmv} format={(value) => formatMoney(value, true)} /><MetricCell value={row.linkVisitors} previous={row.previousLinkVisitors} format={formatNumber} /><MetricCell value={row.spend} previous={row.previousSpend} format={(value) => formatMoney(value, true)} /><MetricCell value={row.impressions} previous={row.previousImpressions} format={formatNumber} /><MetricCell value={row.clicks} previous={row.previousClicks} format={formatNumber} /><MetricCell value={row.purchaseValue} previous={row.previousPurchaseValue} format={(value) => formatMoney(value, true)} /><MetricCell value={coCreateShare} previous={previousCoCreateShare} format={levelPercent} mode="pp" /><MetricCell value={graphicShare} previous={previousGraphicShare} format={levelPercent} mode="pp" /><MetricCell value={brandAdShare} previous={previousBrandAdShare} format={levelPercent} mode="pp" /></tr>;
+    return <tr key={row.key}><td><b>{row.category || "—"}</b><small style={{ color: BRAND_COLORS[row.brand] }}>{row.brand}</small></td><td className="primary-cell"><b title={row.link}>{row.link}</b><small>{row.id || "混合目录"}</small></td><MetricCell value={row.linkGmv} previous={row.previousLinkGmv} format={(value) => formatMoney(value, true)} /><MetricCell value={row.linkVisitors} previous={row.previousLinkVisitors} format={formatNumber} /><MetricCell value={row.spend} previous={row.previousSpend} format={(value) => formatMoney(value, true)} /><MetricCell value={nonBrandSpend} previous={previousNonBrandSpend} format={(value) => formatMoney(value, true)} /><MetricCell value={row.impressions} previous={row.previousImpressions} format={formatNumber} /><MetricCell value={row.clicks} previous={row.previousClicks} format={formatNumber} /><MetricCell value={row.purchaseValue} previous={row.previousPurchaseValue} format={(value) => formatMoney(value, true)} /><MetricCell value={coCreateShare} previous={previousCoCreateShare} format={levelPercent} mode="pp" /><MetricCell value={graphicShare} previous={previousGraphicShare} format={levelPercent} mode="pp" /><MetricCell value={brandAdShare} previous={previousBrandAdShare} format={levelPercent} mode="pp" /></tr>;
   })}</tbody></table></div></>;
 }
 
@@ -2049,7 +2069,7 @@ export function SalesDashboard() {
     let cancelled = false;
     setOffsiteLoading(true);
     setOffsiteError("");
-    loadOffsiteData(currentRange, previousRange, data, DEFAULT_TWD_TO_CNY)
+    loadOffsiteData(currentRange, previousRange, data)
       .then((result) => { if (!cancelled) setOffsiteRows(result); })
       .catch((reason) => { if (!cancelled) setOffsiteError(reason instanceof Error ? reason.message : "站外广告数据同步失败"); })
       .finally(() => { if (!cancelled) setOffsiteLoading(false); });

@@ -106,6 +106,8 @@ ads AS (
       ELSE '图文'
     END AS spend_type
   FROM ${TABLES.g2g}
+  WHERE NOT REGEXP_CONTAINS(LOWER(COALESCE(store, '')), r'跨境|海外|momo|pchome|watsons|屈臣氏|康是美')
+    AND REGEXP_CONTAINS(LOWER(COALESCE(store, '')), r'本土店|shopee|虾皮|蝦皮|旗舰店|旗艦店')
   UNION ALL
   SELECT
     'SKT' AS brand,
@@ -122,6 +124,8 @@ ads AS (
       ELSE '图文'
     END AS spend_type
   FROM ${TABLES.skt}
+  WHERE NOT REGEXP_CONTAINS(LOWER(COALESCE(store, '')), r'跨境|海外|momo|pchome|watsons|屈臣氏|康是美')
+    AND REGEXP_CONTAINS(LOWER(COALESCE(store, '')), r'本土店|shopee|虾皮|蝦皮|旗舰店|旗艦店')
   UNION ALL
   SELECT
     'TP' AS brand,
@@ -208,6 +212,7 @@ SELECT
   SUM(COALESCE(purchase_value, 0)) AS purchase_value,
   SUM(IF(spend_type = '合创', COALESCE(offsite_spend, 0), 0)) AS co_create_spend,
   SUM(IF(spend_type = '图文', COALESCE(offsite_spend, 0), 0)) AS graphic_spend,
+  SUM(IF(spend_type IN ('合创', '图文'), COALESCE(offsite_spend, 0), 0)) AS non_brand_spend,
   SUM(IF(spend_type = '品牌广告', COALESCE(offsite_spend, 0), 0)) AS brand_ad_spend
 FROM joined
 GROUP BY brand, link_id, link_name, category
