@@ -723,7 +723,11 @@ function normalizeDateKey(value: string) {
 
 function defaultCurrentRange(): DateRange {
   const now = new Date();
-  return { start: isoDate(now.getFullYear(), now.getMonth() + 1, 1), end: isoDate(now.getFullYear(), now.getMonth() + 1, now.getDate()) };
+  const lastCompletedDay = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  return {
+    start: isoDate(lastCompletedDay.getFullYear(), lastCompletedDay.getMonth() + 1, 1),
+    end: isoDate(lastCompletedDay.getFullYear(), lastCompletedDay.getMonth() + 1, lastCompletedDay.getDate()),
+  };
 }
 
 function shiftRangePreviousMonth(range: DateRange): DateRange {
