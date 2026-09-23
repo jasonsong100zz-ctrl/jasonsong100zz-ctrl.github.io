@@ -1530,6 +1530,14 @@ function formatTrendDelta(metric: TrendMetricKey, current: number | null, previo
   return `${difference > 0 ? "+" : difference < 0 ? "−" : ""}${Math.abs(difference).toFixed(1)}%`;
 }
 
+function formatTrendHoverDelta(metric: TrendMetricKey, current: number | null, previous: number | null) {
+  if (current === null || previous === null) return "—";
+  const relativeChange = previous === 0
+    ? current === 0 ? "0.0%" : "—（上月同期为0）"
+    : (current - previous > 0 ? "+" : current - previous < 0 ? "−" : "") + Math.abs((current / previous - 1) * 100).toFixed(1) + "%";
+  return metric === "conversion" ? relativeChange + "（" + formatTrendDelta(metric, current, previous) + "）" : relativeChange;
+}
+
 function TrendDrawer({
   row,
   type,
@@ -1608,6 +1616,17 @@ function TrendDrawer({
   };
   const currentLineSegments = buildLineSegments(values);
   const previousLineSegments = buildLineSegments(previousValues);
+  const dataLabelStep = days.length > 14 ? 2 : 1;
+  const shouldShowDataLabel = (index: number) => index % dataLabelStep === 0 || index === days.length - 1;
+  const formatTrendDataLabel = (value: number) => metric === "gmv" ? formatMoney(value, true) : formatTrendValue(metric, value);
+  const comparisonTooltip = (index: number) => {
+    const day = days[index];
+    const currentValue = values[index];
+    const previousValue = previousValues[index];
+    return "本期 " + dateLabel(day.date) + "：" + formatTrendValue(metric, currentValue)
+      + "\n上月同期 " + (day.previousDate ? dateLabel(day.previousDate) : "—") + "：" + formatTrendValue(metric, previousValue)
+      + "\n环比 " + formatTrendHoverDelta(metric, currentValue, previousValue);
+  };
   const axisIndexes = [...new Set([0, Math.floor((days.length - 1) / 3), Math.floor((days.length - 1) * 2 / 3), days.length - 1])].filter((index) => index >= 0);
   const aggregateRows = (items: DailyLinkMetric[]) => items.reduce((total, item) => ({
     gmv: total.gmv + item.gmv,
@@ -1639,8 +1658,12 @@ function TrendDrawer({
           {[chartTop, (chartTop + chartBottom) / 2, chartBottom].map((y) => <line key={y} x1={chartLeft} x2={chartRight} y1={y} y2={y} className="trend-grid-line" />)}
           {previousLineSegments.map((path, index) => <path key={`previous-${index}`} d={path} className="trend-line previous" />)}
           {currentLineSegments.map((path, index) => <path key={`current-${index}`} d={path} className="trend-line current" />)}
-          {previousValues.map((value, index) => value === null || !Number.isFinite(value) ? null : <circle key={`previous-${days[index].date}`} cx={pointX(index)} cy={pointY(value)} r="3.5" className="trend-point previous"><title>上月同期 {days[index].previousDate} · {formatTrendValue(metric, value)}</title></circle>)}
-          {values.map((value, index) => value === null || !Number.isFinite(value) ? null : <circle key={`current-${days[index].date}`} cx={pointX(index)} cy={pointY(value)} r="3.5" className="trend-point current"><title>本期 {days[index].date} · {formatTrendValue(metric, value)}</title></circle>)}
+          {previousValues.map((value, index) => value === null || !Number.isFinite(value) ? null : <circle key={"previous-hit-" + days[index].date} cx={pointX(index)} cy={pointY(value)} r="9" className="trend-hit-target" tabIndex={0} aria-label={comparisonTooltip(index)}><title>{comparisonTooltip(index)}</title></circle>)}
+          {values.map((value, index) => value === null || !Number.isFinite(value) ? null : <circle key={"current-hit-" + days[index].date} cx={pointX(index)} cy={pointY(value)} r="9" className="trend-hit-target" tabIndex={0} aria-label={comparisonTooltip(index)}><title>{comparisonTooltip(index)}</title></circle>)}
+          {previousValues.map((value, index) => value === null || !Number.isFinite(value) ? null : <circle key={`previous-${days[index].date}`} cx={pointX(index)} cy={pointY(value)} r="3.5" className="trend-point previous"><title>{comparisonTooltip(index)}</title></circle>)}
+          {values.map((value, index) => value === null || !Number.isFinite(value) ? null : <circle key={`current-${days[index].date}`} cx={pointX(index)} cy={pointY(value)} r="3.5" className="trend-point current"><title>{comparisonTooltip(index)}</title></circle>)}
+          {previousValues.map((value, index) => value === null || !Number.isFinite(value) || !shouldShowDataLabel(index) ? null : <text key={"previous-label-" + days[index].date} x={pointX(index)} y={pointY(value) + 15} className="trend-data-label previous" textAnchor="middle">{formatTrendDataLabel(value)}</text>)}
+          {values.map((value, index) => value === null || !Number.isFinite(value) || !shouldShowDataLabel(index) ? null : <text key={"current-label-" + days[index].date} x={pointX(index)} y={pointY(value) - 8} className="trend-data-label current" textAnchor="middle">{formatTrendDataLabel(value)}</text>)}
           {axisIndexes.map((index) => <text key={days[index]?.date || index} x={pointX(index)} y="249" className="trend-axis-label" textAnchor={index === 0 ? "start" : index === days.length - 1 ? "end" : "middle"}>{dateLabel(days[index].date)}</text>)}
         </svg></div>}
       </section>
