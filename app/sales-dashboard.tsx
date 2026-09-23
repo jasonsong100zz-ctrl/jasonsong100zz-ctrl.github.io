@@ -78,6 +78,7 @@ type BrandData = {
   config: BrandConfig;
   daily: Array<{ date: string; gmv: number; orders: number }>;
   previousDaily: Array<{ date: string; gmv: number; orders: number }>;
+  dailyLinks: DailyLinkMetric[];
   current: MetricRow;
   previous: MetricRow;
   category: MetricRow[];
@@ -90,6 +91,17 @@ type BrandData = {
 };
 
 type DateRange = { start: string; end: string };
+type DailyLinkMetric = {
+  brand: BrandKey;
+  date: string;
+  id: string;
+  product: string;
+  category: string;
+  gmv: number;
+  orders: number;
+  visitors: number;
+  units: number;
+};
 
 type ChannelSkuRow = {
   key: string;
@@ -645,6 +657,40 @@ function csvRowsInRange(rows: string[][], dateColumn: string, start: string, end
   });
 }
 
+function csvDailyLinkMetrics(
+  rows: string[][],
+  brand: BrandKey,
+  period: DateRange,
+  matchMap: Map<string, MatchRecord>,
+  exchangeRate: number,
+): DailyLinkMetric[] {
+  const groups = new Map<string, DailyLinkMetric>();
+  csvRowsInRange(rows, "B", period.start, period.end).forEach((row) => {
+    const date = normalizeDateKey(csvStringAt(row, "B"));
+    const id = normalizeId(csvStringAt(row, "C"));
+    if (!date || !id) return;
+    const match = matchMap.get(id);
+    const key = `${date}\u0001${id}`;
+    const metric = groups.get(key) || {
+      brand,
+      date,
+      id,
+      product: match?.product || csvStringAt(row, "D") || id,
+      category: normalizeCategory(match?.category || FALLBACK_CATEGORY),
+      gmv: 0,
+      orders: 0,
+      visitors: 0,
+      units: 0,
+    };
+    metric.gmv += csvNumberAt(row, "K") * exchangeRate;
+    metric.orders += csvNumberAt(row, "R");
+    metric.visitors += csvNumberAt(row, "AD");
+    metric.units += csvNumberAt(row, "T");
+    groups.set(key, metric);
+  });
+  return [...groups.values()].sort((left, right) => left.date.localeCompare(right.date) || left.id.localeCompare(right.id));
+}
+
 function csvMetricRows(rows: string[][], dateColumn: string, start: string, end: string, groupColumns: string[] = []) {
   const metricColumns = ["K", "R", "M", "N", "AD", "AH", "AK", "T"];
   const groups = new Map<string, { dimensions: string[]; values: number[] }>();
@@ -944,6 +990,7 @@ async function loadBrand(config: BrandConfig, period: DateRange, previousPeriod:
     if (!id || !product) return;
     matchMap.set(id, { id, link: product, product, category: normalizeCategory(stringAt(row, 3) || FALLBACK_CATEGORY) });
   });
+  const dailyLinks = csvDailyLinkMetrics(linkRows, config.key, period, matchMap, exchangeRate);
 
   const adTotal = [numberAt(adsAgg[0], 0), numberAt(adsAgg[0], 1), numberAt(adsAgg[0], 2), numberAt(adsAgg[0], 3), numberAt(adsAgg[0], 4)];
   const previousAdTotal = [numberAt(adsPrev[0], 0), numberAt(adsPrev[0], 1), numberAt(adsPrev[0], 2), numberAt(adsPrev[0], 3), numberAt(adsPrev[0], 4)];
@@ -1006,6 +1053,7 @@ async function loadBrand(config: BrandConfig, period: DateRange, previousPeriod:
     config,
     daily,
     previousDaily,
+    dailyLinks,
     current,
     previous,
     category: aggregateByCategory(links, config.key),
@@ -1446,6 +1494,113 @@ function TableExportButton({ label, onClick, count }: { label: string; onClick: 
   return <div className="table-actions"><span>{count} 条数据</span><button type="button" onClick={onClick}>导出 Excel</button></div>;
 }
 
+type TrendMetricKey = "gmv" | "orders" | "visitors" | "units" | "conversion";
+const TREND_METRICS: Array<{ key: TrendMetricKey; label: string }> = [
+  { key: "gmv", label: "GMV" },
+  { key: "orders", label: "订单" },
+  { key: "visitors", label: "访客" },
+  { key: "units", label: "销量" },
+  { key: "conversion", label: "转化率" },
+];
+
+function trendValue(metric: TrendMetricKey, row: Pick<DailyLinkMetric, "gmv" | "orders" | "visitors" | "units"> | undefined) {
+  if (!row) return null;
+  if (metric === "conversion") return row.visitors > 0 ? row.orders / row.visitors : null;
+  return row[metric];
+}
+
+function formatTrendValue(metric: TrendMetricKey, value: number | null) {
+  if (value === null || !Number.isFinite(value)) return "—";
+  if (metric === "gmv") return formatMoneyOneDecimal(value);
+  if (metric === "conversion") return levelPercent(value);
+  return formatNumber(value);
+}
+
+function TrendDrawer({
+  row,
+  type,
+  dailyRows,
+  currentRange,
+  onClose,
+}: {
+  row: MetricRow;
+  type: "category" | "link";
+  dailyRows: DailyLinkMetric[];
+  currentRange: DateRange;
+  onClose: () => void;
+}) {
+  const [metric, setMetric] = useState<TrendMetricKey>("gmv");
+  const isCategory = type === "category";
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [onClose]);
+
+  const selectedRows = dailyRows.filter((item) => item.brand === row.brand && (isCategory ? item.category === row.category : item.id === row.id));
+  const byDate = new Map<string, DailyLinkMetric>();
+  selectedRows.forEach((item) => {
+    const current = byDate.get(item.date) || { ...item, gmv: 0, orders: 0, visitors: 0, units: 0 };
+    current.gmv += item.gmv;
+    current.orders += item.orders;
+    current.visitors += item.visitors;
+    current.units += item.units;
+    byDate.set(item.date, current);
+  });
+  const days = Array.from({ length: Math.max(0, dateRangeLength(currentRange)) }, (_, index) => {
+    const date = addDays(currentRange.start, index);
+    return { date, row: byDate.get(date) };
+  });
+  const values = days.map((day) => trendValue(metric, day.row));
+  const validValues = values.filter((value): value is number => value !== null && Number.isFinite(value));
+  const maxValue = Math.max(0, ...validValues);
+  const axisMax = maxValue > 0 ? maxValue * 1.12 : 1;
+  const chartLeft = 58;
+  const chartRight = 884;
+  const chartTop = 23;
+  const chartBottom = 222;
+  const pointX = (index: number) => days.length <= 1 ? (chartLeft + chartRight) / 2 : chartLeft + index / (days.length - 1) * (chartRight - chartLeft);
+  const pointY = (value: number) => chartBottom - value / axisMax * (chartBottom - chartTop);
+  const lineSegments: string[] = [];
+  let segment = "";
+  values.forEach((value, index) => {
+    if (value === null || !Number.isFinite(value)) {
+      if (segment) lineSegments.push(segment);
+      segment = "";
+      return;
+    }
+    segment += `${segment ? " L" : "M"}${pointX(index)},${pointY(value)}`;
+  });
+  if (segment) lineSegments.push(segment);
+  const axisIndexes = [...new Set([0, Math.floor((days.length - 1) / 3), Math.floor((days.length - 1) * 2 / 3), days.length - 1])].filter((index) => index >= 0);
+  const periodConversion = row.visitors > 0 ? row.orders / row.visitors : null;
+  const title = isCategory ? `${row.category} · 品类趋势` : `${row.product || row.link || row.id} · 单品趋势`;
+
+  return <div className="trend-scrim" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <section className="trend-drawer" role="dialog" aria-modal="true" aria-labelledby="trend-drawer-title" style={{ "--brand-color": BRAND_COLORS[row.brand] } as React.CSSProperties}>
+      <header className="trend-drawer-head"><div><p>{row.brand} · {isCategory ? "02 品类进度" : "04 链接明细"}</p><h2 id="trend-drawer-title">{title}</h2>{!isCategory && <small>商品 ID / ID：{row.id || "—"} · {row.category || FALLBACK_CATEGORY}</small>}</div><button type="button" className="trend-close" onClick={onClose} aria-label="关闭趋势详情">×</button></header>
+      <div className="trend-range">查看区间：{rangeLabel(currentRange)}</div>
+      <div className="trend-summary-grid">
+        <div><span>GMV</span><b>{formatMoney(row.gmv, true)}</b></div>
+        <div><span>订单</span><b>{formatNumber(row.orders)}</b></div>
+        <div><span>访客</span><b>{formatNumber(row.visitors)}</b></div>
+        <div><span>销量</span><b>{formatNumber(row.units)}</b></div>
+        <div><span>转化率（订单 ÷ 访客）</span><b>{periodConversion === null ? "—" : levelPercent(periodConversion)}</b></div>
+      </div>
+      <section className="trend-chart-card">
+        <div className="trend-chart-heading"><div><h3>每日趋势</h3><p>日转化率按当天订单 ÷ 当天访客计算；无源表记录的日期保留为空。</p></div><div className="trend-metric-tabs" role="group" aria-label="选择趋势指标">{TREND_METRICS.map((item) => <button type="button" key={item.key} className={metric === item.key ? "active" : ""} onClick={() => setMetric(item.key)}>{item.label}</button>)}</div></div>
+        {selectedRows.length === 0 ? <div className="trend-empty">所选区间内没有可用的每日源数据。</div> : <div className="trend-chart-wrap"><div className="trend-chart-y-axis"><span>{formatTrendValue(metric, axisMax)}</span><span>{formatTrendValue(metric, axisMax / 2)}</span><span>{formatTrendValue(metric, 0)}</span></div><svg className="trend-chart" viewBox="0 0 900 260" preserveAspectRatio="none" role="img" aria-label={`${title}每日${TREND_METRICS.find((item) => item.key === metric)?.label}趋势`}>
+          {[chartTop, (chartTop + chartBottom) / 2, chartBottom].map((y) => <line key={y} x1={chartLeft} x2={chartRight} y1={y} y2={y} className="trend-grid-line" />)}
+          {lineSegments.map((path, index) => <path key={index} d={path} className="trend-line" />)}
+          {values.map((value, index) => value === null || !Number.isFinite(value) ? null : <circle key={days[index].date} cx={pointX(index)} cy={pointY(value)} r="3.5" className="trend-point"><title>{days[index].date} · {formatTrendValue(metric, value)}</title></circle>)}
+          {axisIndexes.map((index) => <text key={days[index]?.date || index} x={pointX(index)} y="249" className="trend-axis-label" textAnchor={index === 0 ? "start" : index === days.length - 1 ? "end" : "middle"}>{dateLabel(days[index].date)}</text>)}
+        </svg></div>}
+      </section>
+      <section className="trend-day-table-section"><h3>每日明细</h3><div className="trend-day-table-wrap"><table className="trend-day-table"><thead><tr><th>日期</th><th>GMV</th><th>订单</th><th>访客</th><th>销量</th><th>转化率</th></tr></thead><tbody>{days.length === 0 ? <tr><td colSpan={6}>日期范围无效</td></tr> : days.map(({ date, row: day }) => <tr key={date}><td>{date}</td>{day ? <><td>{formatMoney(day.gmv, true)}</td><td>{formatNumber(day.orders)}</td><td>{formatNumber(day.visitors)}</td><td>{formatNumber(day.units)}</td><td>{day.visitors > 0 ? levelPercent(day.orders / day.visitors) : "—"}</td></> : <td colSpan={5} className="trend-no-row">源表无当日记录</td>}</tr>)}</tbody></table></div></section>
+    </section>
+  </div>;
+}
+
 function deltaText(current: number | null | undefined, previous: number | null | undefined, mode: "ratio" | "pp" = "ratio") {
   if (current === null || current === undefined || previous === null || previous === undefined || !Number.isFinite(current) || !Number.isFinite(previous)) return "环比 —";
   if (mode === "pp") return `变化 ${current - previous >= 0 ? "+" : "−"}${Math.abs((current - previous) * 100).toFixed(1)}pp`;
@@ -1545,10 +1700,14 @@ function offsiteForMetricRow(row: MetricRow, type: "category" | "link" | "ads", 
   }), { spend: 0, previousSpend: 0, clicks: 0, previousClicks: 0 });
 }
 
-function Table({ rows, type, offsiteRows = [] }: { rows: MetricRow[]; type: "category" | "link" | "ads"; offsiteRows?: OffsiteRow[] }) {
+function Table({ rows, type, offsiteRows = [], dailyRows = [], currentRange }: { rows: MetricRow[]; type: "category" | "link" | "ads"; offsiteRows?: OffsiteRow[]; dailyRows?: DailyLinkMetric[]; currentRange?: DateRange }) {
   const defaultSort: SortState = { key: type === "ads" ? "adGmv" : "gmv", direction: "desc" };
   const [sort, setSort] = useState<SortState>(defaultSort);
-  useEffect(() => setSort(defaultSort), [type]);
+  const [trendRow, setTrendRow] = useState<MetricRow | null>(null);
+  useEffect(() => {
+    setSort(defaultSort);
+    setTrendRow(null);
+  }, [type, currentRange?.start, currentRange?.end]);
   const columns: SortColumn<MetricRow>[] = type === "ads"
     ? [
       { key: "product", label: "产品 / 广告", value: (row) => row.product, defaultDirection: "asc" },
@@ -1572,7 +1731,7 @@ function Table({ rows, type, offsiteRows = [] }: { rows: MetricRow[]; type: "cat
       { key: "orders", label: "订单", value: (row) => row.orders },
       { key: "aov", label: "客单价", value: (row) => row.orders > 0 ? row.gmv / row.orders : null },
       { key: "visitors", label: "访客", value: (row) => row.visitors },
-      { key: "cvr", label: "CVR", value: (row) => row.clicks > 0 ? row.orders / row.clicks : null },
+      { key: "cvr", label: "转化率", value: (row) => row.visitors > 0 ? row.orders / row.visitors : null },
       { key: "fee", label: "费比", value: (row) => row.gmv > 0 ? (row.adSpend + offsiteForMetricRow(row, type, offsiteRows).spend) / row.gmv : null },
       { key: "adShare", label: "站内广告GMV占比", value: (row) => row.gmv > 0 ? row.adGmv / row.gmv : null },
       { key: "onsiteSpend", label: "站内广告花费", value: (row) => row.adSpend },
@@ -1590,7 +1749,7 @@ function Table({ rows, type, offsiteRows = [] }: { rows: MetricRow[]; type: "cat
   const exportMetricTable = () => {
     const headers = type === "ads"
       ? ["产品/广告", "品类", "链接GMV", "链接GMV环比", "广告成交金额", "广告成交金额环比", "广告成交占比", "广告成交占比变化", "花费", "花费环比", "ROI", "ROI环比", "曝光", "曝光环比", "点击", "点击环比", "CTR", "CTR变化", "CPC", "CPC环比", "CVR", "CVR变化"]
-      : [type === "category" ? "品类" : "产品名", ...(type === "link" ? ["商品ID / ID"] : []), "GMV", "GMV环比", "总花费", "总花费环比", "订单", "订单环比", "客单价", "客单价环比", "访客", "访客环比", "CVR", "CVR变化", "费比", "费比变化", "站内广告GMV占比", "站内广告GMV占比变化", "站内广告花费", "站内广告花费环比", "站外广告花费", "站外广告花费环比", "站内广告点击量", "站内广告点击量环比", "站外广告点击量", "站外广告点击量环比"];
+      : [type === "category" ? "品类" : "产品名", ...(type === "link" ? ["商品ID / ID"] : []), "GMV", "GMV环比", "总花费", "总花费环比", "订单", "订单环比", "客单价", "客单价环比", "访客", "访客环比", "转化率（订单/访客）", "转化率变化", "费比", "费比变化", "站内广告GMV占比", "站内广告GMV占比变化", "站内广告花费", "站内广告花费环比", "站外广告花费", "站外广告花费环比", "站内广告点击量", "站内广告点击量环比", "站外广告点击量", "站外广告点击量环比"];
     const exportRows = sorted.map((row) => {
       const aov = row.orders > 0 ? row.gmv / row.orders : 0;
       const previousAov = row.previousOrders > 0 ? row.previousGmv / row.previousOrders : 0;
@@ -1598,8 +1757,8 @@ function Table({ rows, type, offsiteRows = [] }: { rows: MetricRow[]; type: "cat
       const previousCtr = row.previousExposure > 0 ? row.previousClicks / row.previousExposure : 0;
       const cartRate = row.visitors > 0 ? row.cart / row.visitors : 0;
       const previousCartRate = row.previousVisitors > 0 ? row.previousCart / row.previousVisitors : 0;
-      const cvr = row.clicks > 0 ? row.orders / row.clicks : 0;
-      const previousCvr = row.previousClicks > 0 ? row.previousOrders / row.previousClicks : 0;
+      const cvr = row.visitors > 0 ? row.orders / row.visitors : null;
+      const previousCvr = row.previousVisitors > 0 ? row.previousOrders / row.previousVisitors : null;
       const roi = row.adSpend > 0 ? row.adGmv / row.adSpend : 0;
       const previousRoi = row.previousAdSpend > 0 ? row.previousAdGmv / row.previousAdSpend : 0;
       const fee = row.gmv > 0 ? row.adSpend / row.gmv : 0;
@@ -1628,8 +1787,8 @@ function Table({ rows, type, offsiteRows = [] }: { rows: MetricRow[]; type: "cat
     const previousCtr = row.previousExposure > 0 ? row.previousClicks / row.previousExposure : 0;
     const cartRate = row.visitors > 0 ? row.cart / row.visitors : 0;
     const previousCartRate = row.previousVisitors > 0 ? row.previousCart / row.previousVisitors : 0;
-    const cvr = row.clicks > 0 ? row.orders / row.clicks : 0;
-    const previousCvr = row.previousClicks > 0 ? row.previousOrders / row.previousClicks : 0;
+    const cvr = row.visitors > 0 ? row.orders / row.visitors : null;
+    const previousCvr = row.previousVisitors > 0 ? row.previousOrders / row.previousVisitors : null;
     const roi = row.adSpend > 0 ? row.adGmv / row.adSpend : 0;
     const previousRoi = row.previousAdSpend > 0 ? row.previousAdGmv / row.previousAdSpend : 0;
     const fee = row.gmv > 0 ? row.adSpend / row.gmv : 0;
@@ -1646,14 +1805,15 @@ function Table({ rows, type, offsiteRows = [] }: { rows: MetricRow[]; type: "cat
     const previousTotalSpend = row.previousAdSpend + offsite.previousSpend;
     const totalFee = row.gmv > 0 ? totalSpend / row.gmv : 0;
     const previousTotalFee = row.previousGmv > 0 ? previousTotalSpend / row.previousGmv : 0;
+    const primaryLabel = type === "category" ? row.category : row.product || row.link || "—";
     return <tr key={row.key}>
-      <td className="primary-cell"><b title={type === "category" ? row.category : row.product || row.link || "—"}>{type === "category" ? row.category : row.product || row.link || "—"}</b><small style={{ color: BRAND_COLORS[row.brand] }}>{row.brand}{type === "link" ? ` · ${row.category || FALLBACK_CATEGORY}` : ""}</small></td>
+      <td className="primary-cell">{(type === "category" || type === "link") && currentRange ? <button type="button" className="trend-trigger" onClick={() => setTrendRow(row)} title={`查看${primaryLabel}每日趋势`}>{primaryLabel}<span>查看趋势</span></button> : <b title={primaryLabel}>{primaryLabel}</b>}<small style={{ color: BRAND_COLORS[row.brand] }}>{row.brand}{type === "link" ? ` · ${row.category || FALLBACK_CATEGORY}` : ""}</small></td>
       {type === "link" && <td>{row.id || "—"}</td>}
       {type === "ads" && <td>{row.category || "—"}</td>}
       {type === "ads" ? <><MetricCell value={row.gmv > 0 ? row.gmv : null} previous={row.previousGmv > 0 ? row.previousGmv : null} format={(value) => formatMoney(value, true)} /><MetricCell value={row.adGmv} previous={row.previousAdGmv} format={(value) => formatMoney(value, true)} /><MetricCell value={adDealShare} previous={previousAdDealShare} format={levelPercent} mode="pp" /></> : <><MetricCell value={row.gmv} previous={row.previousGmv} format={(value) => formatMoney(value, true)} /><MetricCell value={totalSpend} previous={previousTotalSpend} format={(value) => formatMoney(value, true)} /><MetricCell value={row.orders} previous={row.previousOrders} format={formatNumber} /><MetricCell value={aov} previous={previousAov} format={formatMoney} /><MetricCell value={row.visitors} previous={row.previousVisitors} format={formatNumber} /><MetricCell value={cvr} previous={previousCvr} format={levelPercent} mode="pp" /><MetricCell value={totalFee} previous={previousTotalFee} format={levelPercent} mode="pp" /><MetricCell value={share} previous={previousShare} format={levelPercent} mode="pp" /><MetricCell value={row.adSpend} previous={row.previousAdSpend} format={(value) => formatMoney(value, true)} /><MetricCell value={offsite.spend} previous={offsite.previousSpend} format={(value) => formatMoney(value, true)} /><MetricCell value={row.adClicks} previous={row.previousAdClicks} format={formatNumber} /><MetricCell value={offsite.clicks} previous={offsite.previousClicks} format={formatNumber} /></>}
       {type === "ads" && <><MetricCell value={row.adSpend} previous={row.previousAdSpend} format={(value) => formatMoney(value, true)} /><MetricCell value={roi} previous={previousRoi} format={rate} /><MetricCell value={row.exposure} previous={row.previousExposure} format={formatNumber} /><MetricCell value={row.clicks} previous={row.previousClicks} format={formatNumber} /><MetricCell value={ctr} previous={previousCtr} format={levelPercent} mode="pp" /><MetricCell value={cpc} previous={previousCpc} format={formatMoneyOneDecimal} /><MetricCell value={row.clicks > 0 ? row.conversions / row.clicks : 0} previous={row.previousClicks > 0 ? row.previousConversions / row.previousClicks : 0} format={levelPercent} mode="pp" /></>}
     </tr>;
-  })}</tbody></table></div></>;
+  })}</tbody></table></div>{trendRow && currentRange && (type === "category" || type === "link") && <TrendDrawer key={trendRow.key} row={trendRow} type={type} dailyRows={dailyRows} currentRange={currentRange} onClose={() => setTrendRow(null)} />}</>;
 }
 
 function OffsiteTable({ rows }: { rows: OffsiteRow[] }) {
@@ -2160,14 +2320,14 @@ export function SalesDashboard() {
         <Insight brands={visible} offsiteSpend={overviewOffsite.spend} />
         <section className="comparison-panel"><div className="section-title"><span>01</span><div><h2>品牌每日销售与环比</h2><p>每个品牌一行：左侧比较本期 / 环比区间 GMV，右侧展示站内费比及变化。</p></div><em>{rangeLabel(currentRange)} · {rangeLabel(previousRange)}</em></div><div className="brand-daily-rows">{visible.map((item) => <DailyBrandRow key={item.config.key} item={item} comparisonLabel={comparisonLabel} currentRange={currentRange} previousRange={previousRange} />)}</div></section>
         {brand !== "ALL" && <>
-          <section className="data-page"><div className="section-title"><span>02</span><div><h2>{brand} · 品类进度</h2><p>通过匹配表的商品ID补齐产品与类目。</p></div><em>{rowsFor("category").length} 条明细</em></div><Table rows={rowsFor("category")} type="category" offsiteRows={offsiteRows} /></section>
-          <section className="data-page"><div className="section-title"><span>04</span><div><h2>{brand} · 链接明细</h2><p>以商品ID / ID为关联主键。</p></div><em>{rowsFor("link").length} 条明细</em></div><Table rows={rowsFor("link")} type="link" offsiteRows={offsiteRows} /></section>
+          <section className="data-page"><div className="section-title"><span>02</span><div><h2>{brand} · 品类进度</h2><p>通过匹配表的商品ID补齐产品与类目；点击品类名称查看每日趋势。</p></div><em>{rowsFor("category").length} 条明细</em></div><Table rows={rowsFor("category")} type="category" offsiteRows={offsiteRows} dailyRows={visible.flatMap((item) => item.dailyLinks)} currentRange={currentRange} /></section>
+          <section className="data-page"><div className="section-title"><span>04</span><div><h2>{brand} · 链接明细</h2><p>以商品ID / ID为关联主键；点击商品名称查看单品每日趋势。</p></div><em>{rowsFor("link").length} 条明细</em></div><Table rows={rowsFor("link")} type="link" offsiteRows={offsiteRows} dailyRows={visible.flatMap((item) => item.dailyLinks)} currentRange={currentRange} /></section>
           <section className="data-page"><div className="section-title"><span>05</span><div><h2>{brand} · 站外广告数据</h2><p>按电商产品名匹配链接简称，再以商品ID回填链接经营数据；混合目录仅保留广告数据。</p></div><em>{offsiteLoading ? "同步中" : `${filteredOffsiteRows.length} 条明细`}</em></div>{offsiteLoading && offsiteRows.length === 0 ? <div className="loading-state"><span className="loading-mark" /><div><strong>正在同步站外广告数据</strong><p>读取站外投放表和产品 map</p></div></div> : <OffsiteTable rows={filteredOffsiteRows} />}</section>
           <section className="data-page"><div className="section-title"><span>06</span><div><h2>{brand} · 广告数据</h2><p>站内花费、广告GMV与投放效率。</p></div><em>{rowsFor("ads").length} 条明细</em></div><Table rows={rowsFor("ads")} type="ads" /></section>
         </>}
       </>}
       {page === "offsite" && <section className="data-page"><div className="section-title"><span>05</span><div><h2>站外广告数据</h2><p>经营数据按商品ID / ID回填现有链接明细；广告数据来自三品牌站外投放源表。</p></div><em>{offsiteLoading ? "同步中" : `${filteredOffsiteRows.length} 条明细`}</em></div>{offsiteLoading && offsiteRows.length === 0 ? <div className="loading-state"><span className="loading-mark" /><div><strong>正在同步站外广告数据</strong><p>读取站外投放表和产品 map</p></div></div> : <OffsiteTable rows={filteredOffsiteRows} />}</section>}
-      {page !== "overview" && page !== "shops" && page !== "channels" && page !== "offsite" && <section className="data-page"><div className="section-title"><span>{currentPage.number}</span><div><h2>{currentPage.label}</h2><p>{currentPage.note} · 已应用品牌、日期范围、商品ID、产品名和品类筛选。</p></div><em>{visible.reduce((sum, item) => sum + (page === "category" ? item.category.length : page === "link" ? item.links.length : item.ads.length), 0)} 条明细</em></div><Table rows={rowsFor(page)} type={page} offsiteRows={offsiteRows} /></section>}
+      {page !== "overview" && page !== "shops" && page !== "channels" && page !== "offsite" && <section className="data-page"><div className="section-title"><span>{currentPage.number}</span><div><h2>{currentPage.label}</h2><p>{currentPage.note} · 已应用品牌、日期范围、商品ID、产品名和品类筛选。</p></div><em>{visible.reduce((sum, item) => sum + (page === "category" ? item.category.length : page === "link" ? item.links.length : item.ads.length), 0)} 条明细</em></div><Table rows={rowsFor(page)} type={page} offsiteRows={offsiteRows} dailyRows={visible.flatMap((item) => item.dailyLinks)} currentRange={currentRange} /></section>}
     </>}
     <footer><span>数据源：台湾 SP 三品牌数据表</span><span>综合费比 / 综合 ROI 已按站内广告 + 站外广告总费用计算</span></footer>
     </div></div>
