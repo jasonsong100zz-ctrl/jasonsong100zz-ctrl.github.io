@@ -80,6 +80,8 @@ type BrandData = {
   previousDaily: Array<{ date: string; gmv: number; orders: number }>;
   dailyLinks: DailyLinkMetric[];
   previousMonthDailyLinks: DailyLinkMetric[];
+  dailyAds: DailyAdMetric[];
+  previousMonthDailyAds: DailyAdMetric[];
   current: MetricRow;
   previous: MetricRow;
   category: MetricRow[];
@@ -102,6 +104,32 @@ type DailyLinkMetric = {
   orders: number;
   visitors: number;
   units: number;
+};
+type DailyAdMetric = {
+  brand: BrandKey;
+  date: string;
+  id: string;
+  product: string;
+  category: string;
+  adGmv: number;
+  adSpend: number;
+  impressions: number;
+  clicks: number;
+  conversions: number;
+};
+type DailyOffsiteMetric = {
+  brand: BrandKey;
+  date: string;
+  id: string;
+  link: string;
+  category: string;
+  spend: number;
+  impressions: number;
+  clicks: number;
+  purchaseValue: number;
+  coCreateSpend: number;
+  graphicSpend: number;
+  brandAdSpend: number;
 };
 
 type ChannelSkuRow = {
@@ -208,6 +236,11 @@ type OffsiteSpendSummary = {
   previousSpend: number;
   clicks: number;
   previousClicks: number;
+};
+type OffsiteDataResult = {
+  rows: OffsiteRow[];
+  dailyRows: DailyOffsiteMetric[];
+  previousMonthDailyRows: DailyOffsiteMetric[];
 };
 const FALLBACK_CATEGORY = "其他/赠品";
 
@@ -752,6 +785,36 @@ function csvAdsDetailRows(rows: string[][], config: BrandConfig, start: string, 
   return [...groups.values()].map((group) => rowFromValues([...group.dimensions, ...group.values]));
 }
 
+function csvDailyAdsMetrics(rows: string[][], config: BrandConfig, period: DateRange, matchMap: Map<string, MatchRecord>, exchangeRate: number): DailyAdMetric[] {
+  const groups = new Map<string, DailyAdMetric>();
+  csvRowsInRange(rows, config.adsDate, period.start, period.end).forEach((row) => {
+    const date = normalizeDateKey(csvStringAt(row, config.adsDate));
+    const id = normalizeId(csvStringAt(row, config.adsId));
+    if (!date || !id) return;
+    const match = matchMap.get(id);
+    const key = date + "\u0001" + id;
+    const metric = groups.get(key) || {
+      brand: config.key,
+      date,
+      id,
+      product: match?.product || csvStringAt(row, config.adsProduct) || id,
+      category: normalizeCategory(match?.category || csvStringAt(row, config.adsCategory) || FALLBACK_CATEGORY),
+      adGmv: 0,
+      adSpend: 0,
+      impressions: 0,
+      clicks: 0,
+      conversions: 0,
+    };
+    metric.adGmv += csvNumberAt(row, config.adsGmv) * exchangeRate;
+    metric.adSpend += csvNumberAt(row, config.adsSpend) * exchangeRate;
+    metric.impressions += csvNumberAt(row, config.adsExposure);
+    metric.clicks += csvNumberAt(row, config.adsClicks);
+    metric.conversions += csvNumberAt(row, config.adsConversions);
+    groups.set(key, metric);
+  });
+  return [...groups.values()].sort((left, right) => left.date.localeCompare(right.date) || left.id.localeCompare(right.id));
+}
+
 function csvSumRow(rows: string[][], dateColumn: string, valueColumn: string, start: string, end: string) {
   const total = csvRowsInRange(rows, dateColumn, start, end).reduce((sum, row) => sum + csvNumberAt(row, valueColumn), 0);
   return [rowFromValues([total])];
@@ -993,6 +1056,8 @@ async function loadBrand(config: BrandConfig, period: DateRange, previousPeriod:
   });
   const dailyLinks = csvDailyLinkMetrics(linkRows, config.key, period, matchMap, exchangeRate);
   const previousMonthDailyLinks = csvDailyLinkMetrics(linkRows, config.key, shiftRangePreviousMonth(period), matchMap, exchangeRate);
+  const dailyAds = csvDailyAdsMetrics(adsRows, config, period, matchMap, exchangeRate);
+  const previousMonthDailyAds = csvDailyAdsMetrics(adsRows, config, shiftRangePreviousMonth(period), matchMap, exchangeRate);
 
   const adTotal = [numberAt(adsAgg[0], 0), numberAt(adsAgg[0], 1), numberAt(adsAgg[0], 2), numberAt(adsAgg[0], 3), numberAt(adsAgg[0], 4)];
   const previousAdTotal = [numberAt(adsPrev[0], 0), numberAt(adsPrev[0], 1), numberAt(adsPrev[0], 2), numberAt(adsPrev[0], 3), numberAt(adsPrev[0], 4)];
@@ -1057,6 +1122,8 @@ async function loadBrand(config: BrandConfig, period: DateRange, previousPeriod:
     previousDaily,
     dailyLinks,
     previousMonthDailyLinks,
+    dailyAds,
+    previousMonthDailyAds,
     current,
     previous,
     category: aggregateByCategory(links, config.key),
@@ -1076,7 +1143,7 @@ async function loadBrand(config: BrandConfig, period: DateRange, previousPeriod:
   } satisfies BrandData;
 }
 
-async function loadOffsiteData(period: DateRange, previousPeriod: DateRange, brands: BrandData[]) {
+async function loadOffsiteData(period: DateRange, previousPeriod: DateRange, brands: BrandData[]): Promise<OffsiteDataResult> {
   const shouldUseOffsiteApi = false;
   if (shouldUseOffsiteApi) {
     try {
@@ -1206,13 +1273,15 @@ async function loadOffsiteData(period: DateRange, previousPeriod: DateRange, bra
       if (existing.previousLinkVisitors === null && !isMixed && linkFromSales) existing.previousLinkVisitors = linkFromSales.previousVisitors;
       groups.set(key, existing);
     });
-    return [...groups.values()].sort((left, right) => (right.spend - left.spend) || (right.previousSpend - left.previousSpend));
+    return { rows: [...groups.values()].sort((left, right) => (right.spend - left.spend) || (right.previousSpend - left.previousSpend)), dailyRows: [], previousMonthDailyRows: [] };
     } catch (error) {
       console.warn("站外 API 无法覆盖当前区间，改读 Google Sheet", error);
     }
   }
-  const sourceStart = previousPeriod.start < period.start ? previousPeriod.start : period.start;
-  const sourceEnd = previousPeriod.end > period.end ? previousPeriod.end : period.end;
+  const trendPreviousRange = shiftRangePreviousMonth(period);
+  const sourceRanges = [period, previousPeriod, trendPreviousRange];
+  const sourceStart = sourceRanges.reduce((start, range) => range.start < start ? range.start : start, period.start);
+  const sourceEnd = sourceRanges.reduce((end, range) => range.end > end ? range.end : end, period.end);
   const [productMapRows, ...sourceRows] = await Promise.all([
     loadOffsiteProductMapRows().catch((error) => {
       console.warn("站外产品映射读取失败，继续使用源表名称", error);
@@ -1233,6 +1302,55 @@ async function loadOffsiteData(period: DateRange, previousPeriod: DateRange, bra
       names.forEach((name) => linkByName.set(`${link.brand}:${normalizeLookupText(name)}`, link));
     });
   });
+  const buildDailyRows = (range: DateRange) => {
+    const dailyGroups = new Map<string, DailyOffsiteMetric>();
+    OFFSITE_CONFIGS.forEach((config, configIndex) => {
+      csvRowsInRange(sourceRows[configIndex], config.date, range.start, range.end).forEach((row) => {
+        if (!isLocalShopeeStore(row, config)) return;
+        const date = normalizeDateKey(csvStringAt(row, config.date));
+        const sourceName = csvStringAt(row, config.productName) || csvStringAt(row, config.category) || "未填写";
+        const isMixed = /混合目录|混合目錄/i.test(sourceName);
+        if (!date || isMixed) return;
+        const mapped = findOffsiteMapRecord(productMap, config.brand, sourceName);
+        const mappedId = mapped?.id || "";
+        const linkFromSales = mappedId
+          ? linkById.get(config.brand + ":" + normalizeId(mappedId))
+          : linkByName.get(config.brand + ":" + normalizeLookupText(sourceName));
+        const id = mappedId || linkFromSales?.id || "";
+        if (!id) return;
+        const link = mapped?.link || linkFromSales?.product || sourceName;
+        const category = mapped?.category || linkFromSales?.category || normalizeCategory(csvStringAt(row, config.category) || FALLBACK_CATEGORY);
+        const key = config.brand + ":" + date + ":" + normalizeId(id);
+        const metric = dailyGroups.get(key) || {
+          brand: config.brand,
+          date,
+          id: normalizeId(id),
+          link,
+          category,
+          spend: 0,
+          impressions: 0,
+          clicks: 0,
+          purchaseValue: 0,
+          coCreateSpend: 0,
+          graphicSpend: 0,
+          brandAdSpend: 0,
+        };
+        const spend = csvNumberAt(row, config.spend) * OFFSITE_USD_TO_CNY;
+        const type = classifyOffsiteSpend(row, config);
+        metric.spend += spend;
+        metric.impressions += csvNumberAt(row, config.impressions);
+        metric.clicks += csvNumberAt(row, config.clicks);
+        metric.purchaseValue += csvNumberAt(row, config.purchaseValue) * OFFSITE_USD_TO_CNY;
+        if (type === "brand") metric.brandAdSpend += spend;
+        else if (type === "coCreate") metric.coCreateSpend += spend;
+        else metric.graphicSpend += spend;
+        dailyGroups.set(key, metric);
+      });
+    });
+    return [...dailyGroups.values()].sort((left, right) => left.date.localeCompare(right.date) || left.brand.localeCompare(right.brand) || left.id.localeCompare(right.id));
+  };
+  const dailyRows = buildDailyRows(period);
+  const previousMonthDailyRows = buildDailyRows(trendPreviousRange);
   const groups = new Map<string, OffsiteRow>();
   const addSheetRange = (range: DateRange, previous: boolean) => {
     OFFSITE_CONFIGS.forEach((config, configIndex) => {
@@ -1305,7 +1423,7 @@ async function loadOffsiteData(period: DateRange, previousPeriod: DateRange, bra
   };
   addSheetRange(period, false);
   addSheetRange(previousPeriod, true);
-  return [...groups.values()].sort((left, right) => (right.spend - left.spend) || (right.previousSpend - left.previousSpend));
+  return { rows: [...groups.values()].sort((left, right) => (right.spend - left.spend) || (right.previousSpend - left.previousSpend)), dailyRows, previousMonthDailyRows };
 }
 
 function brandFromValue(value: string): BrandKey | null {
@@ -1497,37 +1615,119 @@ function TableExportButton({ label, onClick, count }: { label: string; onClick: 
   return <div className="table-actions"><span>{count} 条数据</span><button type="button" onClick={onClick}>导出 Excel</button></div>;
 }
 
-type TrendMetricKey = "gmv" | "orders" | "visitors" | "units" | "conversion";
-const TREND_METRICS: Array<{ key: TrendMetricKey; label: string }> = [
-  { key: "gmv", label: "GMV" },
-  { key: "orders", label: "订单" },
-  { key: "visitors", label: "访客" },
-  { key: "units", label: "销量" },
-  { key: "conversion", label: "转化率" },
+type TrendMetricKey =
+  | "gmv" | "orders" | "visitors" | "units" | "conversion"
+  | "onsiteGmv" | "onsiteSpend" | "onsiteImpressions" | "onsiteClicks" | "onsiteConversions" | "onsiteRoi" | "onsiteCtr" | "onsiteCpc" | "onsiteCvr"
+  | "offsiteSpend" | "offsitePurchaseValue" | "offsiteImpressions" | "offsiteClicks" | "offsiteNonBrandSpend" | "offsiteCoCreateSpend" | "offsiteGraphicSpend" | "offsiteBrandSpend" | "offsiteCtr" | "offsiteCpc" | "offsiteRoas";
+type TrendMetricGroupKey = "sales" | "onsite" | "offsite";
+type TrendMetricDefinition = { key: TrendMetricKey; label: string };
+const TREND_METRIC_GROUPS: Array<{ key: TrendMetricGroupKey; label: string; metrics: TrendMetricDefinition[] }> = [
+  { key: "sales", label: "销售经营", metrics: [
+    { key: "gmv", label: "GMV" },
+    { key: "orders", label: "订单" },
+    { key: "visitors", label: "访客" },
+    { key: "units", label: "销量" },
+    { key: "conversion", label: "转化率" },
+  ] },
+  { key: "onsite", label: "站内广告", metrics: [
+    { key: "onsiteGmv", label: "广告成交" },
+    { key: "onsiteSpend", label: "广告花费" },
+    { key: "onsiteImpressions", label: "广告曝光" },
+    { key: "onsiteClicks", label: "广告点击" },
+    { key: "onsiteConversions", label: "广告转化数" },
+    { key: "onsiteRoi", label: "ROI" },
+    { key: "onsiteCtr", label: "CTR" },
+    { key: "onsiteCpc", label: "CPC" },
+    { key: "onsiteCvr", label: "CVR" },
+  ] },
+  { key: "offsite", label: "站外广告", metrics: [
+    { key: "offsiteSpend", label: "站外花费" },
+    { key: "offsitePurchaseValue", label: "站外成交金额" },
+    { key: "offsiteImpressions", label: "站外曝光" },
+    { key: "offsiteClicks", label: "站外点击" },
+    { key: "offsiteNonBrandSpend", label: "非品牌花费" },
+    { key: "offsiteCoCreateSpend", label: "合创花费" },
+    { key: "offsiteGraphicSpend", label: "图文花费" },
+    { key: "offsiteBrandSpend", label: "品牌广告花费" },
+    { key: "offsiteCtr", label: "CTR" },
+    { key: "offsiteCpc", label: "CPC" },
+    { key: "offsiteRoas", label: "ROAS" },
+  ] },
 ];
+const TREND_METRICS = TREND_METRIC_GROUPS.flatMap((group) => group.metrics);
+const TREND_SUMMARY_KEYS: Record<TrendMetricGroupKey, TrendMetricKey[]> = {
+  sales: ["gmv", "orders", "visitors", "units", "conversion"],
+  onsite: ["onsiteGmv", "onsiteSpend", "onsiteImpressions", "onsiteClicks", "onsiteConversions"],
+  offsite: ["offsiteSpend", "offsitePurchaseValue", "offsiteImpressions", "offsiteClicks", "offsiteNonBrandSpend"],
+};
+type DailyLinkMetricValues = Pick<DailyLinkMetric, "gmv" | "orders" | "visitors" | "units">;
+type DailyAdMetricValues = Pick<DailyAdMetric, "adGmv" | "adSpend" | "impressions" | "clicks" | "conversions">;
+type DailyOffsiteMetricValues = Pick<DailyOffsiteMetric, "spend" | "impressions" | "clicks" | "purchaseValue" | "coCreateSpend" | "graphicSpend" | "brandAdSpend">;
 
-function trendValue(metric: TrendMetricKey, row: Pick<DailyLinkMetric, "gmv" | "orders" | "visitors" | "units"> | undefined) {
-  if (!row) return null;
-  if (metric === "conversion") return row.visitors > 0 ? row.orders / row.visitors : null;
-  return row[metric];
+function trendMetricGroup(metric: TrendMetricKey): TrendMetricGroupKey {
+  return metric.startsWith("onsite") ? "onsite" : metric.startsWith("offsite") ? "offsite" : "sales";
+}
+
+function trendValue(metric: TrendMetricKey, sales?: DailyLinkMetricValues, onsite?: DailyAdMetricValues, offsite?: DailyOffsiteMetricValues) {
+  if (trendMetricGroup(metric) === "sales") {
+    if (!sales) return null;
+    if (metric === "conversion") return sales.visitors > 0 ? sales.orders / sales.visitors : null;
+    if (metric === "gmv") return sales.gmv;
+    if (metric === "orders") return sales.orders;
+    if (metric === "visitors") return sales.visitors;
+    return sales.units;
+  }
+  if (trendMetricGroup(metric) === "onsite") {
+    if (!onsite) return null;
+    if (metric === "onsiteGmv") return onsite.adGmv;
+    if (metric === "onsiteSpend") return onsite.adSpend;
+    if (metric === "onsiteImpressions") return onsite.impressions;
+    if (metric === "onsiteClicks") return onsite.clicks;
+    if (metric === "onsiteConversions") return onsite.conversions;
+    if (metric === "onsiteRoi") return onsite.adSpend > 0 ? onsite.adGmv / onsite.adSpend : null;
+    if (metric === "onsiteCtr") return onsite.impressions > 0 ? onsite.clicks / onsite.impressions : null;
+    if (metric === "onsiteCpc") return onsite.clicks > 0 ? onsite.adSpend / onsite.clicks : null;
+    return onsite.clicks > 0 ? onsite.conversions / onsite.clicks : null;
+  }
+  if (!offsite) return null;
+  if (metric === "offsiteSpend") return offsite.spend;
+  if (metric === "offsitePurchaseValue") return offsite.purchaseValue;
+  if (metric === "offsiteImpressions") return offsite.impressions;
+  if (metric === "offsiteClicks") return offsite.clicks;
+  if (metric === "offsiteNonBrandSpend") return offsite.coCreateSpend + offsite.graphicSpend;
+  if (metric === "offsiteCoCreateSpend") return offsite.coCreateSpend;
+  if (metric === "offsiteGraphicSpend") return offsite.graphicSpend;
+  if (metric === "offsiteBrandSpend") return offsite.brandAdSpend;
+  if (metric === "offsiteCtr") return offsite.impressions > 0 ? offsite.clicks / offsite.impressions : null;
+  if (metric === "offsiteCpc") return offsite.clicks > 0 ? offsite.spend / offsite.clicks : null;
+  return offsite.spend > 0 ? offsite.purchaseValue / offsite.spend : null;
+}
+
+function isTrendCurrency(metric: TrendMetricKey) {
+  return ["gmv", "onsiteGmv", "onsiteSpend", "onsiteCpc", "offsiteSpend", "offsitePurchaseValue", "offsiteNonBrandSpend", "offsiteCoCreateSpend", "offsiteGraphicSpend", "offsiteBrandSpend", "offsiteCpc"].includes(metric);
+}
+
+function isTrendRate(metric: TrendMetricKey) {
+  return ["conversion", "onsiteCtr", "onsiteCvr", "offsiteCtr"].includes(metric);
 }
 
 function formatTrendValue(metric: TrendMetricKey, value: number | null) {
   if (value === null || !Number.isFinite(value)) return "—";
-  if (metric === "gmv") return formatMoneyOneDecimal(value);
-  if (metric === "conversion") return levelPercent(value);
+  if (isTrendCurrency(metric)) return formatMoneyOneDecimal(value);
+  if (isTrendRate(metric)) return levelPercent(value);
+  if (metric === "onsiteRoi" || metric === "offsiteRoas") return rate(value);
   return formatNumber(value);
 }
 
 function formatTrendDelta(metric: TrendMetricKey, current: number | null, previous: number | null) {
   if (current === null || previous === null) return "—";
-  if (metric === "conversion") {
+  if (isTrendRate(metric)) {
     const difference = (current - previous) * 100;
-    return `${difference > 0 ? "+" : difference < 0 ? "−" : ""}${Math.abs(difference).toFixed(1)}pp`;
+    return (difference > 0 ? "+" : difference < 0 ? "−" : "") + Math.abs(difference).toFixed(1) + "pp";
   }
   if (previous === 0) return current === 0 ? "0.0%" : "新增长";
   const difference = (current / previous - 1) * 100;
-  return `${difference > 0 ? "+" : difference < 0 ? "−" : ""}${Math.abs(difference).toFixed(1)}%`;
+  return (difference > 0 ? "+" : difference < 0 ? "−" : "") + Math.abs(difference).toFixed(1) + "%";
 }
 
 function formatTrendHoverDelta(metric: TrendMetricKey, current: number | null, previous: number | null) {
@@ -1535,7 +1735,7 @@ function formatTrendHoverDelta(metric: TrendMetricKey, current: number | null, p
   const relativeChange = previous === 0
     ? current === 0 ? "0.0%" : "—（上月同期为0）"
     : (current - previous > 0 ? "+" : current - previous < 0 ? "−" : "") + Math.abs((current / previous - 1) * 100).toFixed(1) + "%";
-  return metric === "conversion" ? relativeChange + "（" + formatTrendDelta(metric, current, previous) + "）" : relativeChange;
+  return isTrendRate(metric) ? relativeChange + "（" + formatTrendDelta(metric, current, previous) + "）" : relativeChange;
 }
 
 function TrendDrawer({
@@ -1543,6 +1743,10 @@ function TrendDrawer({
   type,
   dailyRows,
   previousMonthRows,
+  dailyAdsRows,
+  previousMonthAdsRows,
+  dailyOffsiteRows,
+  previousMonthOffsiteRows,
   currentRange,
   onClose,
 }: {
@@ -1550,6 +1754,10 @@ function TrendDrawer({
   type: "category" | "link";
   dailyRows: DailyLinkMetric[];
   previousMonthRows: DailyLinkMetric[];
+  dailyAdsRows: DailyAdMetric[];
+  previousMonthAdsRows: DailyAdMetric[];
+  dailyOffsiteRows: DailyOffsiteMetric[];
+  previousMonthOffsiteRows: DailyOffsiteMetric[];
   currentRange: DateRange;
   onClose: () => void;
 }) {
@@ -1563,6 +1771,10 @@ function TrendDrawer({
 
   const selectedRows = dailyRows.filter((item) => item.brand === row.brand && (isCategory ? item.category === row.category : item.id === row.id));
   const selectedPreviousMonthRows = previousMonthRows.filter((item) => item.brand === row.brand && (isCategory ? item.category === row.category : item.id === row.id));
+  const selectedAdsRows = dailyAdsRows.filter((item) => item.brand === row.brand && (isCategory ? item.category === row.category : item.id === row.id));
+  const selectedPreviousMonthAdsRows = previousMonthAdsRows.filter((item) => item.brand === row.brand && (isCategory ? item.category === row.category : item.id === row.id));
+  const selectedOffsiteRows = dailyOffsiteRows.filter((item) => item.brand === row.brand && (isCategory ? item.category === row.category : item.id === row.id));
+  const selectedPreviousMonthOffsiteRows = previousMonthOffsiteRows.filter((item) => item.brand === row.brand && (isCategory ? item.category === row.category : item.id === row.id));
   const byDate = new Map<string, DailyLinkMetric>();
   const previousMonthByDate = new Map<string, DailyLinkMetric>();
   selectedRows.forEach((item) => {
@@ -1581,16 +1793,57 @@ function TrendDrawer({
     current.units += item.units;
     previousMonthByDate.set(item.date, current);
   });
+  const aggregateAdsByDate = (items: DailyAdMetric[]) => {
+    const groups = new Map<string, DailyAdMetric>();
+    items.forEach((item) => {
+      const current = groups.get(item.date) || { ...item, adGmv: 0, adSpend: 0, impressions: 0, clicks: 0, conversions: 0 };
+      current.adGmv += item.adGmv;
+      current.adSpend += item.adSpend;
+      current.impressions += item.impressions;
+      current.clicks += item.clicks;
+      current.conversions += item.conversions;
+      groups.set(item.date, current);
+    });
+    return groups;
+  };
+  const aggregateOffsiteByDate = (items: DailyOffsiteMetric[]) => {
+    const groups = new Map<string, DailyOffsiteMetric>();
+    items.forEach((item) => {
+      const current = groups.get(item.date) || { ...item, spend: 0, impressions: 0, clicks: 0, purchaseValue: 0, coCreateSpend: 0, graphicSpend: 0, brandAdSpend: 0 };
+      current.spend += item.spend;
+      current.impressions += item.impressions;
+      current.clicks += item.clicks;
+      current.purchaseValue += item.purchaseValue;
+      current.coCreateSpend += item.coCreateSpend;
+      current.graphicSpend += item.graphicSpend;
+      current.brandAdSpend += item.brandAdSpend;
+      groups.set(item.date, current);
+    });
+    return groups;
+  };
+  const adsByDate = aggregateAdsByDate(selectedAdsRows);
+  const previousMonthAdsByDate = aggregateAdsByDate(selectedPreviousMonthAdsRows);
+  const offsiteByDate = aggregateOffsiteByDate(selectedOffsiteRows);
+  const previousMonthOffsiteByDate = aggregateOffsiteByDate(selectedPreviousMonthOffsiteRows);
   const previousMonthRange = shiftRangePreviousMonth(currentRange);
   const currentLength = Math.max(0, dateRangeLength(currentRange));
   const previousMonthLength = Math.max(0, dateRangeLength(previousMonthRange));
   const days = Array.from({ length: currentLength }, (_, index) => {
     const date = addDays(currentRange.start, index);
     const previousDate = index < previousMonthLength ? addDays(previousMonthRange.start, index) : null;
-    return { date, row: byDate.get(date), previousDate, previousRow: previousDate ? previousMonthByDate.get(previousDate) : undefined };
+    return {
+      date,
+      row: byDate.get(date),
+      adRow: adsByDate.get(date),
+      offsiteRow: offsiteByDate.get(date),
+      previousDate,
+      previousRow: previousDate ? previousMonthByDate.get(previousDate) : undefined,
+      previousAdRow: previousDate ? previousMonthAdsByDate.get(previousDate) : undefined,
+      previousOffsiteRow: previousDate ? previousMonthOffsiteByDate.get(previousDate) : undefined,
+    };
   });
-  const values = days.map((day) => trendValue(metric, day.row));
-  const previousValues = days.map((day) => day.previousDate ? trendValue(metric, day.previousRow) : null);
+  const values = days.map((day) => trendValue(metric, day.row, day.adRow, day.offsiteRow));
+  const previousValues = days.map((day) => day.previousDate ? trendValue(metric, day.previousRow, day.previousAdRow, day.previousOffsiteRow) : null);
   const validValues = [...values, ...previousValues].filter((value): value is number => value !== null && Number.isFinite(value));
   const maxValue = Math.max(0, ...validValues);
   const axisMax = maxValue > 0 ? maxValue * 1.12 : 1;
@@ -1618,7 +1871,7 @@ function TrendDrawer({
   const previousLineSegments = buildLineSegments(previousValues);
   const dataLabelStep = days.length > 14 ? 2 : 1;
   const shouldShowDataLabel = (index: number) => index % dataLabelStep === 0 || index === days.length - 1;
-  const formatTrendDataLabel = (value: number) => metric === "gmv" ? formatMoney(value, true) : formatTrendValue(metric, value);
+  const formatTrendDataLabel = (value: number) => isTrendCurrency(metric) ? formatMoney(value, true) : formatTrendValue(metric, value);
   const comparisonTooltip = (index: number) => {
     const day = days[index];
     const currentValue = values[index];
@@ -1636,14 +1889,52 @@ function TrendDrawer({
   }), { gmv: 0, orders: 0, visitors: 0, units: 0 });
   const currentTotals = aggregateRows(selectedRows);
   const previousMonthTotals = aggregateRows(selectedPreviousMonthRows);
-  const totalValue = (source: typeof currentTotals, key: TrendMetricKey) => key === "conversion"
-    ? source.visitors > 0 ? source.orders / source.visitors : null
-    : source[key];
-  const summaryCards = TREND_METRICS.map((item) => ({
+  const aggregateAdsRows = (items: DailyAdMetric[]) => items.reduce((total, item) => ({
+    adGmv: total.adGmv + item.adGmv,
+    adSpend: total.adSpend + item.adSpend,
+    impressions: total.impressions + item.impressions,
+    clicks: total.clicks + item.clicks,
+    conversions: total.conversions + item.conversions,
+  }), { adGmv: 0, adSpend: 0, impressions: 0, clicks: 0, conversions: 0 });
+  const aggregateOffsiteRows = (items: DailyOffsiteMetric[]) => items.reduce((total, item) => ({
+    spend: total.spend + item.spend,
+    impressions: total.impressions + item.impressions,
+    clicks: total.clicks + item.clicks,
+    purchaseValue: total.purchaseValue + item.purchaseValue,
+    coCreateSpend: total.coCreateSpend + item.coCreateSpend,
+    graphicSpend: total.graphicSpend + item.graphicSpend,
+    brandAdSpend: total.brandAdSpend + item.brandAdSpend,
+  }), { spend: 0, impressions: 0, clicks: 0, purchaseValue: 0, coCreateSpend: 0, graphicSpend: 0, brandAdSpend: 0 });
+  const currentAdsTotals = aggregateAdsRows(selectedAdsRows);
+  const previousMonthAdsTotals = aggregateAdsRows(selectedPreviousMonthAdsRows);
+  const currentOffsiteTotals = aggregateOffsiteRows(selectedOffsiteRows);
+  const previousMonthOffsiteTotals = aggregateOffsiteRows(selectedPreviousMonthOffsiteRows);
+  const summaryKeys = TREND_SUMMARY_KEYS[trendMetricGroup(metric)];
+  const summaryMetrics = TREND_METRICS.filter((item) => summaryKeys.includes(item.key));
+  const summaryValue = (key: TrendMetricKey, previous: boolean) => {
+    const group = trendMetricGroup(key);
+    if (group === "sales") {
+      const selected = previous ? selectedPreviousMonthRows : selectedRows;
+      return selected.length ? trendValue(key, previous ? previousMonthTotals : currentTotals) : null;
+    }
+    if (group === "onsite") {
+      const selected = previous ? selectedPreviousMonthAdsRows : selectedAdsRows;
+      return selected.length ? trendValue(key, undefined, previous ? previousMonthAdsTotals : currentAdsTotals) : null;
+    }
+    const selected = previous ? selectedPreviousMonthOffsiteRows : selectedOffsiteRows;
+    return selected.length ? trendValue(key, undefined, undefined, previous ? previousMonthOffsiteTotals : currentOffsiteTotals) : null;
+  };
+  const summaryCards = summaryMetrics.map((item) => ({
     ...item,
-    current: selectedRows.length > 0 ? totalValue(currentTotals, item.key) : null,
-    previous: selectedPreviousMonthRows.length > 0 ? totalValue(previousMonthTotals, item.key) : null,
+    current: summaryValue(item.key, false),
+    previous: summaryValue(item.key, true),
   }));
+  const metricGroup = trendMetricGroup(metric);
+  const trendHelp = metricGroup === "sales"
+    ? "转化率按订单 ÷ 访客计算；缺少源表记录的日期不补零。"
+    : metricGroup === "onsite"
+      ? "站内广告按日期和商品 ID 汇总；ROI、CTR、CPC、CVR 均按当日总量计算。"
+      : "站外仅统计本土 Shopee 店；美元金额按当前汇率折算人民币，未映射商品不并入单品趋势。";
   const title = isCategory ? `${row.category} · 品类趋势` : `${row.product || row.link || row.id} · 单品趋势`;
 
   return <div className="trend-scrim" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
@@ -1652,9 +1943,9 @@ function TrendDrawer({
       <div className="trend-range">本期：{rangeLabel(currentRange)}　·　上月同期：{rangeLabel(previousMonthRange)}</div>
       <div className="trend-summary-grid">{summaryCards.map((item) => <div key={item.key}><span>{item.label} · 本期</span><b>{formatTrendValue(item.key, item.current)}</b><small>上月同期 {formatTrendValue(item.key, item.previous)} · {formatTrendDelta(item.key, item.current, item.previous)}</small></div>)}</div>
       <section className="trend-chart-card">
-        <div className="trend-chart-heading"><div><h3>每日趋势</h3><p>转化率按订单 ÷ 访客计算；缺少源表记录的日期不补零。</p></div><div className="trend-metric-tabs" role="group" aria-label="选择趋势指标">{TREND_METRICS.map((item) => <button type="button" key={item.key} className={metric === item.key ? "active" : ""} onClick={() => setMetric(item.key)}>{item.label}</button>)}</div></div>
+        <div className="trend-chart-heading"><div><h3>每日趋势</h3><p>{trendHelp}</p></div><div className="trend-metric-select"><select value={metric} onChange={(event) => setMetric(event.target.value as TrendMetricKey)} aria-label="选择趋势指标">{TREND_METRIC_GROUPS.map((group) => <optgroup key={group.key} label={group.label}>{group.metrics.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}</optgroup>)}</select></div></div>
         <div className="trend-legend"><span><i className="current" />本期 {rangeLabel(currentRange)}</span><span><i className="previous" />上月同期 {rangeLabel(previousMonthRange)}</span></div>
-        {selectedRows.length === 0 && selectedPreviousMonthRows.length === 0 ? <div className="trend-empty">本期和上月同期均没有可用的每日源数据。</div> : <div className="trend-chart-wrap"><div className="trend-chart-y-axis"><span>{formatTrendValue(metric, axisMax)}</span><span>{formatTrendValue(metric, axisMax / 2)}</span><span>{formatTrendValue(metric, 0)}</span></div><svg className="trend-chart" viewBox="0 0 900 260" preserveAspectRatio="none" role="img" aria-label={`${title}每日${TREND_METRICS.find((item) => item.key === metric)?.label}及上月同期对比`}>
+        {validValues.length === 0 ? <div className="trend-empty">该指标在本期和上月同期都没有可用的每日数据。</div> : <div className="trend-chart-wrap"><div className="trend-chart-y-axis"><span>{formatTrendValue(metric, axisMax)}</span><span>{formatTrendValue(metric, axisMax / 2)}</span><span>{formatTrendValue(metric, 0)}</span></div><svg className="trend-chart" viewBox="0 0 900 260" preserveAspectRatio="none" role="img" aria-label={`${title}每日${TREND_METRICS.find((item) => item.key === metric)?.label}及上月同期对比`}>
           {[chartTop, (chartTop + chartBottom) / 2, chartBottom].map((y) => <line key={y} x1={chartLeft} x2={chartRight} y1={y} y2={y} className="trend-grid-line" />)}
           {previousLineSegments.map((path, index) => <path key={`previous-${index}`} d={path} className="trend-line previous" />)}
           {currentLineSegments.map((path, index) => <path key={`current-${index}`} d={path} className="trend-line current" />)}
@@ -1667,9 +1958,9 @@ function TrendDrawer({
           {axisIndexes.map((index) => <text key={days[index]?.date || index} x={pointX(index)} y="249" className="trend-axis-label" textAnchor={index === 0 ? "start" : index === days.length - 1 ? "end" : "middle"}>{dateLabel(days[index].date)}</text>)}
         </svg></div>}
       </section>
-      <section className="trend-day-table-section"><h3>每日 {TREND_METRICS.find((item) => item.key === metric)?.label} 对比</h3><div className="trend-day-table-wrap"><table className="trend-day-table"><thead><tr><th>日期</th><th>本期</th><th>上月同期</th><th>变化</th></tr></thead><tbody>{days.length === 0 ? <tr><td colSpan={4}>日期范围无效</td></tr> : days.map(({ date, row: day, previousDate, previousRow }) => {
-        const currentValue = trendValue(metric, day);
-        const previousValue = trendValue(metric, previousRow);
+      <section className="trend-day-table-section"><h3>每日 {TREND_METRICS.find((item) => item.key === metric)?.label} 对比</h3><div className="trend-day-table-wrap"><table className="trend-day-table"><thead><tr><th>日期</th><th>本期</th><th>上月同期</th><th>变化</th></tr></thead><tbody>{days.length === 0 ? <tr><td colSpan={4}>日期范围无效</td></tr> : days.map(({ date, row: day, adRow, offsiteRow, previousDate, previousRow, previousAdRow, previousOffsiteRow }) => {
+        const currentValue = trendValue(metric, day, adRow, offsiteRow);
+        const previousValue = trendValue(metric, previousRow, previousAdRow, previousOffsiteRow);
         return <tr key={date}><td>{dateLabel(date)}<small>同期 {previousDate ? dateLabel(previousDate) : "—"}</small></td><td>{formatTrendValue(metric, currentValue)}</td><td>{formatTrendValue(metric, previousValue)}</td><td>{formatTrendDelta(metric, currentValue, previousValue)}</td></tr>;
       })}</tbody></table></div></section>
     </section>
@@ -1775,7 +2066,7 @@ function offsiteForMetricRow(row: MetricRow, type: "category" | "link" | "ads", 
   }), { spend: 0, previousSpend: 0, clicks: 0, previousClicks: 0 });
 }
 
-function Table({ rows, type, offsiteRows = [], dailyRows = [], previousMonthRows = [], currentRange }: { rows: MetricRow[]; type: "category" | "link" | "ads"; offsiteRows?: OffsiteRow[]; dailyRows?: DailyLinkMetric[]; previousMonthRows?: DailyLinkMetric[]; currentRange?: DateRange }) {
+function Table({ rows, type, offsiteRows = [], dailyRows = [], previousMonthRows = [], dailyAdsRows = [], previousMonthAdsRows = [], dailyOffsiteRows = [], previousMonthOffsiteRows = [], currentRange }: { rows: MetricRow[]; type: "category" | "link" | "ads"; offsiteRows?: OffsiteRow[]; dailyRows?: DailyLinkMetric[]; previousMonthRows?: DailyLinkMetric[]; dailyAdsRows?: DailyAdMetric[]; previousMonthAdsRows?: DailyAdMetric[]; dailyOffsiteRows?: DailyOffsiteMetric[]; previousMonthOffsiteRows?: DailyOffsiteMetric[]; currentRange?: DateRange }) {
   const defaultSort: SortState = { key: type === "ads" ? "adGmv" : "gmv", direction: "desc" };
   const [sort, setSort] = useState<SortState>(defaultSort);
   const [trendRow, setTrendRow] = useState<MetricRow | null>(null);
@@ -1888,7 +2179,7 @@ function Table({ rows, type, offsiteRows = [], dailyRows = [], previousMonthRows
       {type === "ads" ? <><MetricCell value={row.gmv > 0 ? row.gmv : null} previous={row.previousGmv > 0 ? row.previousGmv : null} format={(value) => formatMoney(value, true)} /><MetricCell value={row.adGmv} previous={row.previousAdGmv} format={(value) => formatMoney(value, true)} /><MetricCell value={adDealShare} previous={previousAdDealShare} format={levelPercent} mode="pp" /></> : <><MetricCell value={row.gmv} previous={row.previousGmv} format={(value) => formatMoney(value, true)} /><MetricCell value={totalSpend} previous={previousTotalSpend} format={(value) => formatMoney(value, true)} /><MetricCell value={row.orders} previous={row.previousOrders} format={formatNumber} /><MetricCell value={aov} previous={previousAov} format={formatMoney} /><MetricCell value={row.visitors} previous={row.previousVisitors} format={formatNumber} /><MetricCell value={cvr} previous={previousCvr} format={levelPercent} mode="pp" /><MetricCell value={totalFee} previous={previousTotalFee} format={levelPercent} mode="pp" /><MetricCell value={share} previous={previousShare} format={levelPercent} mode="pp" /><MetricCell value={row.adSpend} previous={row.previousAdSpend} format={(value) => formatMoney(value, true)} /><MetricCell value={offsite.spend} previous={offsite.previousSpend} format={(value) => formatMoney(value, true)} /><MetricCell value={row.adClicks} previous={row.previousAdClicks} format={formatNumber} /><MetricCell value={offsite.clicks} previous={offsite.previousClicks} format={formatNumber} /></>}
       {type === "ads" && <><MetricCell value={row.adSpend} previous={row.previousAdSpend} format={(value) => formatMoney(value, true)} /><MetricCell value={roi} previous={previousRoi} format={rate} /><MetricCell value={row.exposure} previous={row.previousExposure} format={formatNumber} /><MetricCell value={row.clicks} previous={row.previousClicks} format={formatNumber} /><MetricCell value={ctr} previous={previousCtr} format={levelPercent} mode="pp" /><MetricCell value={cpc} previous={previousCpc} format={formatMoneyOneDecimal} /><MetricCell value={row.clicks > 0 ? row.conversions / row.clicks : 0} previous={row.previousClicks > 0 ? row.previousConversions / row.previousClicks : 0} format={levelPercent} mode="pp" /></>}
     </tr>;
-  })}</tbody></table></div>{trendRow && currentRange && (type === "category" || type === "link") && <TrendDrawer key={trendRow.key} row={trendRow} type={type} dailyRows={dailyRows} previousMonthRows={previousMonthRows} currentRange={currentRange} onClose={() => setTrendRow(null)} />}</>;
+  })}</tbody></table></div>{trendRow && currentRange && (type === "category" || type === "link") && <TrendDrawer key={trendRow.key} row={trendRow} type={type} dailyRows={dailyRows} previousMonthRows={previousMonthRows} dailyAdsRows={dailyAdsRows} previousMonthAdsRows={previousMonthAdsRows} dailyOffsiteRows={dailyOffsiteRows} previousMonthOffsiteRows={previousMonthOffsiteRows} currentRange={currentRange} onClose={() => setTrendRow(null)} />}</>;
 }
 
 function OffsiteTable({ rows }: { rows: OffsiteRow[] }) {
@@ -2251,6 +2542,8 @@ export function SalesDashboard() {
   const [shopLoading, setShopLoading] = useState(false);
   const [shopError, setShopError] = useState("");
   const [offsiteRows, setOffsiteRows] = useState<OffsiteRow[]>([]);
+  const [dailyOffsiteRows, setDailyOffsiteRows] = useState<DailyOffsiteMetric[]>([]);
+  const [previousMonthDailyOffsiteRows, setPreviousMonthDailyOffsiteRows] = useState<DailyOffsiteMetric[]>([]);
   const [offsiteLoading, setOffsiteLoading] = useState(false);
   const [offsiteError, setOffsiteError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -2305,7 +2598,12 @@ export function SalesDashboard() {
     setOffsiteLoading(true);
     setOffsiteError("");
     loadOffsiteData(currentRange, previousRange, data)
-      .then((result) => { if (!cancelled) setOffsiteRows(result); })
+      .then((result) => {
+        if (cancelled) return;
+        setOffsiteRows(result.rows);
+        setDailyOffsiteRows(result.dailyRows);
+        setPreviousMonthDailyOffsiteRows(result.previousMonthDailyRows);
+      })
       .catch((reason) => { if (!cancelled) setOffsiteError(reason instanceof Error ? reason.message : "站外广告数据同步失败"); })
       .finally(() => { if (!cancelled) setOffsiteLoading(false); });
     return () => { cancelled = true; };
@@ -2395,8 +2693,8 @@ export function SalesDashboard() {
         <Insight brands={visible} offsiteSpend={overviewOffsite.spend} />
         <section className="comparison-panel"><div className="section-title"><span>01</span><div><h2>品牌每日销售与环比</h2><p>每个品牌一行：左侧比较本期 / 环比区间 GMV，右侧展示站内费比及变化。</p></div><em>{rangeLabel(currentRange)} · {rangeLabel(previousRange)}</em></div><div className="brand-daily-rows">{visible.map((item) => <DailyBrandRow key={item.config.key} item={item} comparisonLabel={comparisonLabel} currentRange={currentRange} previousRange={previousRange} />)}</div></section>
         {brand !== "ALL" && <>
-          <section className="data-page"><div className="section-title"><span>02</span><div><h2>{brand} · 品类进度</h2><p>通过匹配表的商品ID补齐产品与类目；点击品类名称查看每日趋势。</p></div><em>{rowsFor("category").length} 条明细</em></div><Table rows={rowsFor("category")} type="category" offsiteRows={offsiteRows} dailyRows={visible.flatMap((item) => item.dailyLinks)} previousMonthRows={visible.flatMap((item) => item.previousMonthDailyLinks)} currentRange={currentRange} /></section>
-          <section className="data-page"><div className="section-title"><span>04</span><div><h2>{brand} · 链接明细</h2><p>以商品ID / ID为关联主键；点击商品名称查看单品每日趋势。</p></div><em>{rowsFor("link").length} 条明细</em></div><Table rows={rowsFor("link")} type="link" offsiteRows={offsiteRows} dailyRows={visible.flatMap((item) => item.dailyLinks)} previousMonthRows={visible.flatMap((item) => item.previousMonthDailyLinks)} currentRange={currentRange} /></section>
+          <section className="data-page"><div className="section-title"><span>02</span><div><h2>{brand} · 品类进度</h2><p>通过匹配表的商品ID补齐产品与类目；点击品类名称查看每日趋势。</p></div><em>{rowsFor("category").length} 条明细</em></div><Table rows={rowsFor("category")} type="category" offsiteRows={offsiteRows} dailyRows={visible.flatMap((item) => item.dailyLinks)} previousMonthRows={visible.flatMap((item) => item.previousMonthDailyLinks)} dailyAdsRows={visible.flatMap((item) => item.dailyAds)} previousMonthAdsRows={visible.flatMap((item) => item.previousMonthDailyAds)} dailyOffsiteRows={dailyOffsiteRows} previousMonthOffsiteRows={previousMonthDailyOffsiteRows} currentRange={currentRange} /></section>
+          <section className="data-page"><div className="section-title"><span>04</span><div><h2>{brand} · 链接明细</h2><p>以商品ID / ID为关联主键；点击商品名称查看单品每日趋势。</p></div><em>{rowsFor("link").length} 条明细</em></div><Table rows={rowsFor("link")} type="link" offsiteRows={offsiteRows} dailyRows={visible.flatMap((item) => item.dailyLinks)} previousMonthRows={visible.flatMap((item) => item.previousMonthDailyLinks)} dailyAdsRows={visible.flatMap((item) => item.dailyAds)} previousMonthAdsRows={visible.flatMap((item) => item.previousMonthDailyAds)} dailyOffsiteRows={dailyOffsiteRows} previousMonthOffsiteRows={previousMonthDailyOffsiteRows} currentRange={currentRange} /></section>
           <section className="data-page"><div className="section-title"><span>05</span><div><h2>{brand} · 站外广告数据</h2><p>按电商产品名匹配链接简称，再以商品ID回填链接经营数据；混合目录仅保留广告数据。</p></div><em>{offsiteLoading ? "同步中" : `${filteredOffsiteRows.length} 条明细`}</em></div>{offsiteLoading && offsiteRows.length === 0 ? <div className="loading-state"><span className="loading-mark" /><div><strong>正在同步站外广告数据</strong><p>读取站外投放表和产品 map</p></div></div> : <OffsiteTable rows={filteredOffsiteRows} />}</section>
           <section className="data-page"><div className="section-title"><span>06</span><div><h2>{brand} · 广告数据</h2><p>站内花费、广告GMV与投放效率。</p></div><em>{rowsFor("ads").length} 条明细</em></div><Table rows={rowsFor("ads")} type="ads" /></section>
         </>}
