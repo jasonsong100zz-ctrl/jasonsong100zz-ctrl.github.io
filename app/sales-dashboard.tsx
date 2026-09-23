@@ -1934,7 +1934,7 @@ function TrendDrawer({
     ? "转化率按订单 ÷ 访客计算；缺少源表记录的日期不补零。"
     : metricGroup === "onsite"
       ? "站内广告按日期和商品 ID 汇总；ROI、CTR、CPC、CVR 均按当日总量计算。"
-      : "站外仅统计本土 Shopee 店；美元金额按当前汇率折算人民币，未映射商品不并入单品趋势。";
+      : "站外沿用看板现有店铺筛选与产品映射；美元金额按当前汇率折算人民币，未映射商品不并入单品趋势。";
   const title = isCategory ? `${row.category} · 品类趋势` : `${row.product || row.link || row.id} · 单品趋势`;
 
   return <div className="trend-scrim" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
