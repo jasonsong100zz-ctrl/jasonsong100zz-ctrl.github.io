@@ -864,6 +864,14 @@ function shopRowsInRange(rows: ShopDailyRow[], range: DateRange) {
   return rows.filter((row) => row.date >= range.start && row.date <= range.end);
 }
 
+function shopTrendDates(endDate: string) {
+  return Array.from({ length: 30 }, (_, index) => addDays(endDate, index - 29));
+}
+
+function previousMonthDate(date: string) {
+  return shiftRangePreviousMonth({ start: date, end: date }).start;
+}
+
 function aggregateShopRows(rows: ShopDailyRow[]): ShopMetric {
   const total = rows.reduce((acc, row) => ({
     sales: acc.sales + row.sales,
@@ -1059,14 +1067,23 @@ async function loadBrand(config: BrandConfig, period: DateRange, previousPeriod:
   const dailyAds = csvDailyAdsMetrics(adsRows, config, period, matchMap, exchangeRate);
   const previousMonthDailyAds = csvDailyAdsMetrics(adsRows, config, shiftRangePreviousMonth(period), matchMap, exchangeRate);
 
+  const aggregateDailyAdsById = (metrics: DailyAdMetric[]) => {
+    const groups = new Map<string, DailyAdMetric>();
+    metrics.forEach((item) => {
+      const current = groups.get(item.id) || { ...item, adGmv: 0, adSpend: 0, impressions: 0, clicks: 0, conversions: 0 };
+      current.adGmv += item.adGmv;
+      current.adSpend += item.adSpend;
+      current.impressions += item.impressions;
+      current.clicks += item.clicks;
+      current.conversions += item.conversions;
+      groups.set(item.id, current);
+    });
+    return groups;
+  };
+  const dailyAdsById = aggregateDailyAdsById(dailyAds);
+
   const adTotal = [numberAt(adsAgg[0], 0), numberAt(adsAgg[0], 1), numberAt(adsAgg[0], 2), numberAt(adsAgg[0], 3), numberAt(adsAgg[0], 4)];
   const previousAdTotal = [numberAt(adsPrev[0], 0), numberAt(adsPrev[0], 1), numberAt(adsPrev[0], 2), numberAt(adsPrev[0], 3), numberAt(adsPrev[0], 4)];
-  const adMap = new Map<string, number[]>();
-  adsDetail.forEach((row) => {
-    const id = normalizeId(stringAt(row, 2));
-    if (!id) return;
-    adMap.set(id, addValues(adMap.get(id) || [], [numberAt(row, 3), numberAt(row, 4), numberAt(row, 5), numberAt(row, 6), numberAt(row, 7)]));
-  });
   const previousAdMap = new Map<string, number[]>();
   adsPrevDetail.forEach((row) => {
     const id = normalizeId(stringAt(row, 2));
@@ -1098,17 +1115,29 @@ async function loadBrand(config: BrandConfig, period: DateRange, previousPeriod:
       const match = matchMap.get(id);
       const product = match?.product || row.sourceProduct || id;
       const dimensions = { link: product, id, product, category: normalizeCategory(match?.category || FALLBACK_CATEGORY) };
-      const ad = adMap.get(id) || [];
-      const prevAd = previousAdMap.get(id) || [];
+      const ad = dailyAdsById.get(id);
+      const previousAd = previousAdMap.get(id) || [];
       const prev = previousMap.get(id) || [];
-      return metricFromValues(
-        config.key,
-        `link-${id}-${index}`,
-        [...row.values, ad[0] || 0, ad[1] || 0, ad[2] || 0, ad[3] || 0, ad[4] || 0],
-        dimensions,
-        [...prev, prevAd[0] || 0, prevAd[1] || 0, prevAd[2] || 0, prevAd[3] || 0, prevAd[4] || 0],
-        exchangeRate,
-      );
+      return {
+        ...metricFromValues(
+          config.key,
+          `link-${id}-${index}`,
+          [...row.values, 0, 0, 0, 0, 0],
+          dimensions,
+          [...prev, 0, 0, 0, 0, 0],
+          exchangeRate,
+        ),
+        adGmv: ad?.adGmv || 0,
+        adSpend: ad?.adSpend || 0,
+        adExposure: ad?.impressions || 0,
+        adClicks: ad?.clicks || 0,
+        conversions: ad?.conversions || 0,
+        previousAdGmv: (previousAd[0] || 0) * exchangeRate,
+        previousAdSpend: (previousAd[1] || 0) * exchangeRate,
+        previousAdExposure: previousAd[2] || 0,
+        previousAdClicks: previousAd[3] || 0,
+        previousConversions: previousAd[4] || 0,
+      };
     }).filter((row) => row.link || row.id);
   };
   const links = decorateRows(currentLinks, prevLinks);
@@ -2459,27 +2488,52 @@ function formatShopMetric(key: ShopMetricKey, value: number | null) {
 function ShopPage({ rows, brand, currentRange, previousRange, loading, error }: { rows: ShopDailyRow[]; brand: "ALL" | BrandKey; currentRange: DateRange; previousRange: DateRange; loading: boolean; error: string }) {
   const [trendMetric, setTrendMetric] = useState<ShopMetricKey>("sales");
   const trendRange = { start: addDays(currentRange.end, -29), end: currentRange.end };
+  const [hoveredTrendIndex, setHoveredTrendIndex] = useState<number | null>(null);
   const visibleBrands = channelBrandItems(brand);
   const summaries = visibleBrands.map((item) => ({
     item,
     current: aggregateShopRows(shopRowsInRange(rows.filter((row) => row.brand === item.key), currentRange)),
     previous: aggregateShopRows(shopRowsInRange(rows.filter((row) => row.brand === item.key), previousRange)),
   }));
-  const trendDates = Array.from({ length: 30 }, (_, index) => addDays(trendRange.start, index));
+  const trendDates = shopTrendDates(currentRange.end);
+  const previousTrendDates = trendDates.map(previousMonthDate);
+  const rowsByBrandDate = new Map<string, ShopDailyRow[]>();
+  rows.forEach((row) => {
+    const key = `${row.brand}\u0001${row.date}`;
+    rowsByBrandDate.set(key, [...(rowsByBrandDate.get(key) || []), row]);
+  });
+  const shopValueFor = (brandKey: BrandKey, date: string) => {
+    const dailyRows = rowsByBrandDate.get(`${brandKey}\u0001${date}`);
+    return dailyRows ? aggregateShopRows(dailyRows)[trendMetric] : null;
+  };
   const trendLines = visibleBrands.map((item) => ({
     item,
-    values: trendDates.map((date) => {
-      const metric = aggregateShopRows(rows.filter((row) => row.brand === item.key && row.date === date));
-      return metric[trendMetric];
-    }),
+    values: trendDates.map((date) => shopValueFor(item.key, date)),
+    previousValues: previousTrendDates.map((date) => shopValueFor(item.key, date)),
   }));
-  const validValues = trendLines.flatMap((line) => line.values).filter((value): value is number => value !== null && Number.isFinite(value));
+  const validValues = trendLines.flatMap((line) => [...line.values, ...line.previousValues]).filter((value): value is number => value !== null && Number.isFinite(value));
   const max = Math.max(1, ...validValues);
-  const pointString = (values: Array<number | null>) => values.map((value, index) => {
-    const x = 30 + index / Math.max(1, trendDates.length - 1) * 840;
-    const y = 220 - ((value || 0) / max * 190);
-    return `${x},${y}`;
-  }).join(" ");
+  const chartX = (index: number) => 30 + index / Math.max(1, trendDates.length - 1) * 840;
+  const chartY = (value: number) => 220 - value / max * 190;
+  const linePath = (values: Array<number | null>) => {
+    const segments: string[] = [];
+    let points: string[] = [];
+    values.forEach((value, index) => {
+      if (value === null || !Number.isFinite(value)) {
+        if (points.length > 1) segments.push(`M${points.join(" L")}`);
+        points = [];
+        return;
+      }
+      points.push(`${chartX(index)},${chartY(value)}`);
+    });
+    if (points.length > 1) segments.push(`M${points.join(" L")}`);
+    return segments.join(" ");
+  };
+  const chartDelta = (current: number | null, previous: number | null) => {
+    if (current === null || previous === null) return null;
+    return trendMetric === "conversion" ? current - previous : ratio(current, previous);
+  };
+  const chartStep = 840 / Math.max(1, trendDates.length - 1);
 
   return <>
     <section className="data-page shop-page">
@@ -2493,11 +2547,36 @@ function ShopPage({ rows, brand, currentRange, previousRange, loading, error }: 
       </>}
     </section>
     {(!loading || rows.length > 0) && <section className="data-page shop-trend-page">
-      <div className="section-title"><span>30D</span><div><h2>近三十天趋势</h2><p>固定回看截至主日期到的 30 个完整日；可切换六项核心指标。</p></div><em>{rangeLabel(trendRange)}</em></div>
+      <div className="section-title"><span>30D</span><div><h2>近三十天趋势</h2><p>实线为本期，虚线为上月同期；悬停曲线可查看两期数值与日环比。</p></div><em>{rangeLabel(trendRange)}</em></div>
       <div className="shop-metric-tabs">{SHOP_METRICS.map((metric) => <button type="button" className={trendMetric === metric.key ? "active" : ""} onClick={() => setTrendMetric(metric.key)} key={metric.key}>{metric.label}</button>)}</div>
       <div className="shop-chart-card">
-        <div className="shop-chart-legend">{trendLines.map(({ item }) => <span style={{ "--brand-color": BRAND_COLORS[item.key] } as React.CSSProperties} key={item.key}><i />{item.key}</span>)}<strong>{SHOP_METRICS.find((item) => item.key === trendMetric)?.label}</strong></div>
-        <div className="shop-chart"><div className="shop-y-axis"><span>{formatShopMetric(trendMetric, max)}</span><span>{formatShopMetric(trendMetric, max / 2)}</span><span>0</span></div><svg viewBox="0 0 900 240" preserveAspectRatio="none" role="img" aria-label={`近三十天${SHOP_METRICS.find((item) => item.key === trendMetric)?.label}趋势`}><line x1="30" y1="30" x2="870" y2="30" /><line x1="30" y1="125" x2="870" y2="125" /><line x1="30" y1="220" x2="870" y2="220" />{trendLines.map(({ item, values }) => <polyline key={item.key} points={pointString(values)} style={{ stroke: BRAND_COLORS[item.key] }} />)}</svg></div>
+        <div className="shop-chart-legend">{trendLines.map(({ item }) => <span style={{ "--brand-color": BRAND_COLORS[item.key] } as React.CSSProperties} key={item.key}><i />{item.key}</span>)}<span className="shop-period-legend"><i className="shop-current-sample" />本期</span><span className="shop-period-legend"><i className="shop-previous-sample" />上月同期</span><strong>{SHOP_METRICS.find((item) => item.key === trendMetric)?.label}</strong></div>
+        <div className="shop-chart-readout" id="shop-trend-readout" aria-live="polite">
+          {hoveredTrendIndex === null ? <small>悬停或键盘聚焦任一天，查看本期、上月同期数值及环比。</small> : <>
+            <b>{dateLabel(trendDates[hoveredTrendIndex])} · 上月同期 {dateLabel(previousTrendDates[hoveredTrendIndex])}</b>
+            <div className="shop-chart-readout-rows">{trendLines.map(({ item, values, previousValues }) => {
+              const currentValue = values[hoveredTrendIndex];
+              const previousValue = previousValues[hoveredTrendIndex];
+              const delta = chartDelta(currentValue, previousValue);
+              return <span className="shop-chart-readout-row" style={{ "--brand-color": BRAND_COLORS[item.key] } as React.CSSProperties} key={item.key}><i />{item.key}<small>本期</small><b>{formatShopMetric(trendMetric, currentValue)}</b><small>上月同期</small><b>{formatShopMetric(trendMetric, previousValue)}</b><em className={trendClass(delta)}>{deltaText(currentValue, previousValue, trendMetric === "conversion" ? "pp" : "ratio")}</em></span>;
+            })}</div>
+          </>}
+        </div>
+        <div className="shop-chart"><div className="shop-y-axis"><span>{formatShopMetric(trendMetric, max)}</span><span>{formatShopMetric(trendMetric, max / 2)}</span><span>0</span></div><svg viewBox="0 0 900 240" preserveAspectRatio="none" role="group" aria-label={`近三十天${SHOP_METRICS.find((item) => item.key === trendMetric)?.label}趋势，实线本期，虚线为上月同期`}>
+          <line x1="30" y1="30" x2="870" y2="30" /><line x1="30" y1="125" x2="870" y2="125" /><line x1="30" y1="220" x2="870" y2="220" />
+          {trendLines.map(({ item, values, previousValues }) => <g key={item.key}>
+            <path className="shop-series-previous" d={linePath(previousValues)} style={{ stroke: BRAND_COLORS[item.key] }} />
+            <path className="shop-series-current" d={linePath(values)} style={{ stroke: BRAND_COLORS[item.key] }} />
+          </g>)}
+          {hoveredTrendIndex !== null && <>
+            <line className="shop-hover-line" x1={chartX(hoveredTrendIndex)} y1="30" x2={chartX(hoveredTrendIndex)} y2="220" />
+            {trendLines.map(({ item, values, previousValues }) => <g key={`${item.key}-hover`}>
+              {values[hoveredTrendIndex] !== null && <circle className="shop-current-point" cx={chartX(hoveredTrendIndex)} cy={chartY(values[hoveredTrendIndex]!)} r="4" style={{ stroke: BRAND_COLORS[item.key] }} />}
+              {previousValues[hoveredTrendIndex] !== null && <circle className="shop-previous-point" cx={chartX(hoveredTrendIndex)} cy={chartY(previousValues[hoveredTrendIndex]!)} r="4" style={{ stroke: BRAND_COLORS[item.key] }} />}
+            </g>)}
+          </>}
+          {trendDates.map((date, index) => <rect className="shop-chart-hitbox" key={`${date}-${index}`} x={chartX(index) - chartStep / 2} y="30" width={chartStep} height="190" tabIndex={0} role="button" aria-describedby="shop-trend-readout" aria-label={`${dateLabel(date)} 对比上月同期 ${dateLabel(previousTrendDates[index])}`} onPointerEnter={() => setHoveredTrendIndex(index)} onFocus={() => setHoveredTrendIndex(index)}><title>{dateLabel(date)} 对比上月同期 {dateLabel(previousTrendDates[index])}</title></rect>)}
+        </svg></div>
         <div className="shop-x-axis">{trendDates.map((date, index) => index % 5 === 0 || index === trendDates.length - 1 ? <span style={{ left: `${index / Math.max(1, trendDates.length - 1) * 100}%` }} key={date}>{dateLabel(date)}</span> : null)}</div>
       </div>
     </section>}
@@ -2549,6 +2628,9 @@ export function SalesDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [refresh, setRefresh] = useState(0);
+  const [loadedDataKey, setLoadedDataKey] = useState("");
+  const requestedDataKey = [currentRange.start, currentRange.end, previousRange.start, previousRange.end, refresh].join("|");
+  const dataIsCurrent = loadedDataKey === requestedDataKey;
 
   useEffect(() => setUnlocked(sessionStorage.getItem("tw-sp-dashboard") === "unlocked"), []);
   useEffect(() => {
@@ -2557,11 +2639,15 @@ export function SalesDashboard() {
     setLoading(true);
     setError("");
     Promise.all(BRANDS.map((item) => loadBrand(item, currentRange, previousRange, DEFAULT_TWD_TO_CNY)))
-      .then((result) => { if (!cancelled) setData(result); })
+      .then((result) => {
+        if (cancelled) return;
+        setData(result);
+        setLoadedDataKey(requestedDataKey);
+      })
       .catch((reason) => { if (!cancelled) setError(reason instanceof Error ? reason.message : "数据同步失败"); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [currentRange, previousRange, refresh, unlocked]);
+  }, [currentRange, previousRange, refresh, requestedDataKey, unlocked]);
 
   useEffect(() => {
     if (!unlocked || page !== "channels") return;
@@ -2579,9 +2665,10 @@ export function SalesDashboard() {
     if (!unlocked || page !== "shops") return;
     let cancelled = false;
     const trendStart = addDays(currentRange.end, -29);
+    const previousTrendDates = shopTrendDates(currentRange.end).map(previousMonthDate);
     const fetchRange = {
-      start: [currentRange.start, previousRange.start, trendStart].sort()[0],
-      end: [currentRange.end, previousRange.end].sort().at(-1) || currentRange.end,
+      start: [currentRange.start, previousRange.start, trendStart, ...previousTrendDates].sort()[0],
+      end: [currentRange.end, previousRange.end, ...previousTrendDates].sort().at(-1) || currentRange.end,
     };
     setShopLoading(true);
     setShopError("");
@@ -2593,7 +2680,7 @@ export function SalesDashboard() {
   }, [currentRange, previousRange, refresh, unlocked, page]);
 
   useEffect(() => {
-    if (!unlocked || data.length === 0 || (page !== "offsite" && page !== "overview" && page !== "link" && page !== "category")) return;
+    if (!unlocked || !dataIsCurrent || data.length === 0 || (page !== "offsite" && page !== "overview" && page !== "link" && page !== "category")) return;
     let cancelled = false;
     setOffsiteLoading(true);
     setOffsiteError("");
@@ -2607,9 +2694,9 @@ export function SalesDashboard() {
       .catch((reason) => { if (!cancelled) setOffsiteError(reason instanceof Error ? reason.message : "站外广告数据同步失败"); })
       .finally(() => { if (!cancelled) setOffsiteLoading(false); });
     return () => { cancelled = true; };
-  }, [currentRange, previousRange, refresh, unlocked, page, brand, data]);
+  }, [currentRange, previousRange, refresh, unlocked, page, brand, data, dataIsCurrent]);
 
-  const visible = useMemo(() => data.filter((item) => brand === "ALL" || item.config.key === brand), [brand, data]);
+  const visible = useMemo(() => (dataIsCurrent ? data : []).filter((item) => brand === "ALL" || item.config.key === brand), [brand, data, dataIsCurrent]);
   const options = useMemo(() => {
     const rows = visible.flatMap((item) => [...item.category, ...item.links]);
     return {
@@ -2685,7 +2772,7 @@ export function SalesDashboard() {
     {error && <div className="data-alert"><b>数据同步失败</b><span>{error}</span><button onClick={() => setRefresh((value) => value + 1)}>重新同步</button></div>}
     {offsiteError && <div className="data-alert"><b>站外广告数据同步失败</b><span>{offsiteError}</span><button onClick={() => setRefresh((value) => value + 1)}>重新同步</button></div>}
     {page === "shops" && <ShopPage rows={shopRows} brand={brand} currentRange={currentRange} previousRange={previousRange} loading={shopLoading} error={shopError} />}
-    {page === "channels" ? <><ChannelSummary rows={channelData.rows} /><section className="data-page channel-page"><div className="section-title"><span>07</span><div><h2>线上 / 线下 SKU 销量对比</h2><p>线上数据来自台湾线上 SKU 销量表；线下汇总三品牌各通路原始 SKU 销量；07 独立按 SKU 匹配到 SPU 与品类，不影响链接明细和品类进度。</p></div><em>{channelLoading ? "同步中" : `${channelData.rows.length} 个SKU`}</em></div>{channelError && <div className="data-alert"><b>销量数据同步失败</b><span>{channelError}</span></div>}{channelLoading && channelData.rows.length === 0 ? <div className="loading-state"><span className="loading-mark" /><div><strong>正在同步线上与线下 SKU 销量</strong><p>按主日期范围和环比日期范围汇总 SKU，再映射到 SPU</p></div></div> : <><div className="channel-subsection"><div><h3>品类销量对比</h3><p>先看各品牌品类层级的线上、线下差距与倍数。</p></div></div><ChannelCategoryTable rows={channelData.rows} brand={brand} /><div className="channel-subsection sku-subsection"><div><h3>SPU 销量明细</h3><p>默认按 SPU 汇总；展开后查看 SKU 码和 SKU 名。</p></div></div><ChannelSpuTable rows={channelData.rows} brand={brand} /></>}</section></> : loading && data.length === 0 ? <div className="loading-state"><span className="loading-mark" /><div><strong>正在同步销售与广告数据</strong><p>读取三品牌的店铺、链接、商品ID和广告明细</p></div></div> : <>
+    {page === "channels" ? <><ChannelSummary rows={channelData.rows} /><section className="data-page channel-page"><div className="section-title"><span>07</span><div><h2>线上 / 线下 SKU 销量对比</h2><p>线上数据来自台湾线上 SKU 销量表；线下汇总三品牌各通路原始 SKU 销量；07 独立按 SKU 匹配到 SPU 与品类，不影响链接明细和品类进度。</p></div><em>{channelLoading ? "同步中" : `${channelData.rows.length} 个SKU`}</em></div>{channelError && <div className="data-alert"><b>销量数据同步失败</b><span>{channelError}</span></div>}{channelLoading && channelData.rows.length === 0 ? <div className="loading-state"><span className="loading-mark" /><div><strong>正在同步线上与线下 SKU 销量</strong><p>按主日期范围和环比日期范围汇总 SKU，再映射到 SPU</p></div></div> : <><div className="channel-subsection"><div><h3>品类销量对比</h3><p>先看各品牌品类层级的线上、线下差距与倍数。</p></div></div><ChannelCategoryTable rows={channelData.rows} brand={brand} /><div className="channel-subsection sku-subsection"><div><h3>SPU 销量明细</h3><p>默认按 SPU 汇总；展开后查看 SKU 码和 SKU 名。</p></div></div><ChannelSpuTable rows={channelData.rows} brand={brand} /></>}</section></> : loading && !dataIsCurrent ? <div className="loading-state"><span className="loading-mark" /><div><strong>正在同步销售与广告数据</strong><p>读取三品牌的店铺、链接、商品ID和广告明细</p></div></div> : <>
       {page === "overview" && <>
         <section className="metric-grid"><MetricCard label="累计 GMV" value={formatMoney(total.gmv, true)} delta={ratio(total.gmv, total.previous)} note={`DMS折后实收 · 环比区间 ${formatMoney(total.previous, true)}`} color="#2364d8" /><MetricCard label="目标 GMV 达成" value={levelPercent(total.goal > 0 ? total.gmv / total.goal : null)} delta={total.goal > 0 ? (total.gmv - total.previous) / total.goal : null} deltaMode="pp" note={`目标 ${formatMoney(total.goal, true)}`} color="#ff766b" /><MetricCard label="综合费比" value={levelPercent(total.gmv > 0 ? totalAdCost / total.gmv : null)} delta={(total.gmv > 0 && total.previous > 0) ? totalAdCost / total.gmv - previousTotalAdCost / total.previous : null} deltaMode="pp" note="总花费 / DMS GMV" color="#1ba89c" /><MetricCard label="综合 ROI" value={rate(totalRoi)} delta={ratio(totalRoi, previousTotalRoi || 0)} note="DMS GMV / 总花费" color="#8d7bd8" /></section>
         <section className="metric-grid secondary"><MetricCard label="订单量" value={formatNumber(total.orders)} delta={ratio(total.orders, total.previousOrders)} note={`客单价 ${formatMoney(total.orders > 0 ? total.gmv / total.orders : 0)}`} color="#2364d8" /><MetricCard label="虾皮补贴券" value={formatMoney(total.voucher, true)} delta={ratio(total.voucher, total.previousVoucher)} note={`Voucher from shopee · 占GMV ${levelPercent(total.gmv > 0 ? total.voucher / total.gmv : null)}`} color="#ff766b" /><MetricCard label="站外花费" value={formatMoney(overviewOffsite.spend, true)} delta={ratio(overviewOffsite.spend, overviewOffsite.previousSpend)} note={`站外点击 ${formatNumber(overviewOffsite.clicks)}`} color="#1ba89c" /><MetricCard label="站内广告GMV占比" value={levelPercent(total.gmv > 0 ? total.adGmv / total.gmv : null)} delta={(total.gmv > 0 && total.previous > 0) ? total.adGmv / total.gmv - total.previousAdGmv / total.previous : null} deltaMode="pp" note={`站内广告GMV ${formatMoney(total.adGmv, true)}`} color="#8d7bd8" /></section>

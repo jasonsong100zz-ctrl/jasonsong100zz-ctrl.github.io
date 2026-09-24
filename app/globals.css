@@ -313,14 +313,32 @@ td.metric-value small { font-size: 9px; }
 .shop-metric-tabs button { padding: 7px 14px; border: 1px solid #d3deec; border-radius: 999px; background: #fff; color: #617996; font-size: 10px; font-weight: 800; cursor: pointer; }
 .shop-metric-tabs button.active { border-color: var(--blue); background: #edf4ff; color: var(--blue); }
 .shop-chart-card { padding: 15px 17px 13px; border: 1px solid var(--line); border-radius: 12px; background: #fbfdff; }
-.shop-chart-legend { display: flex; align-items: center; gap: 14px; margin-bottom: 7px; color: #69809f; font-size: 10px; font-weight: 800; }
+.shop-chart-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin-bottom: 7px; color: #69809f; font-size: 10px; font-weight: 800; }
 .shop-chart-legend span { display: flex; align-items: center; gap: 5px; }
 .shop-chart-legend i { width: 17px; height: 3px; border-radius: 99px; background: var(--brand-color); }
+.shop-chart-legend .shop-period-legend { gap: 5px; font-weight: 700; }
+.shop-chart-legend .shop-period-legend i { height: 0; border-top: 2px solid #647994; border-radius: 0; background: none; }
+.shop-chart-legend .shop-period-legend .shop-previous-sample { border-top-style: dashed; }
 .shop-chart-legend strong { margin-left: auto; color: var(--ink); font-size: 12px; }
+.shop-chart-readout { display: flex; min-height: 48px; flex-direction: column; justify-content: center; gap: 5px; margin: 2px 0 5px; padding: 7px 10px; border: 1px solid #e4ebf4; border-radius: 8px; background: #fff; color: #5e7491; font-size: 10px; }
+.shop-chart-readout > b { color: var(--ink); font-size: 10px; }
+.shop-chart-readout > small { color: #7489a6; font-size: 10px; }
+.shop-chart-readout-rows { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 270px), 1fr)); gap: 5px 12px; }
+.shop-chart-readout-row { display: flex; min-width: 0; align-items: center; gap: 5px; white-space: nowrap; font-size: 9px; }
+.shop-chart-readout-row i { width: 12px; height: 3px; flex: 0 0 auto; border-radius: 99px; background: var(--brand-color); }
+.shop-chart-readout-row > b { margin-left: auto; color: var(--ink); }
+.shop-chart-readout-row > small { color: #7489a6; }
+.shop-chart-readout-row > em { font-style: normal; font-weight: 800; }
 .shop-chart { position: relative; height: 260px; padding-left: 52px; }
 .shop-chart svg { width: 100%; height: 240px; overflow: visible; }
 .shop-chart svg line { stroke: #e4ebf4; stroke-width: 1; vector-effect: non-scaling-stroke; }
-.shop-chart svg polyline { fill: none; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.shop-chart svg .shop-series-current, .shop-chart svg .shop-series-previous { fill: none; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.shop-chart svg .shop-series-previous { stroke-width: 2; stroke-dasharray: 7 5; opacity: .72; }
+.shop-chart svg .shop-hover-line { stroke: #8495aa; stroke-width: 1; stroke-dasharray: 3 4; vector-effect: non-scaling-stroke; pointer-events: none; }
+.shop-chart svg .shop-current-point { fill: #fff; stroke-width: 2; vector-effect: non-scaling-stroke; pointer-events: none; }
+.shop-chart svg .shop-previous-point { fill: #fbfdff; stroke-width: 2; stroke-dasharray: 2 1; vector-effect: non-scaling-stroke; pointer-events: none; }
+.shop-chart svg .shop-chart-hitbox { fill: transparent; cursor: crosshair; }
+.shop-chart svg .shop-chart-hitbox:focus { fill: rgb(35 100 216 / 5%); stroke: rgb(35 100 216 / 50%); stroke-width: .7; outline: none; }
 .shop-y-axis { position: absolute; inset: 26px auto 34px 0; display: flex; flex-direction: column; justify-content: space-between; width: 48px; color: #8293aa; font-size: 8px; font-weight: 700; text-align: right; }
 .shop-x-axis { position: relative; height: 18px; margin: -20px 14px 0 62px; color: #8293aa; font-size: 8px; font-weight: 700; }
 .shop-x-axis span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
