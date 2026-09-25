@@ -437,7 +437,7 @@ footer { display: flex; justify-content: space-between; gap: 15px; margin-top: 2
 .intraday-rule b { color: #2664d8; font-size: 10px; }
 .intraday-notice { display: flex; gap: 9px; align-items: center; margin-top: 14px; padding: 11px 14px; border: 1px solid #f0d8a4; border-radius: 10px; background: #fff9eb; color: #866a31; font-size: 11px; }
 .intraday-notice strong { color: #9c6d12; }
-.intraday-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 11px; margin-top: 14px; }
+.intraday-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 11px; margin-top: 14px; }
 .intraday-card { padding: 15px; border: 1px solid #dbe6f5; border-radius: 13px; background: #fff; box-shadow: 0 8px 22px rgb(66 97 145 / 7%); }
 .intraday-card-label { color: #6d83a2; font-size: 11px; font-weight: 800; }
 .intraday-card > strong { display: block; margin: 10px 0 8px; color: #132b4b; font-size: clamp(20px, 2.4vw, 29px); letter-spacing: -.04em; }
@@ -454,11 +454,12 @@ footer { display: flex; justify-content: space-between; gap: 15px; margin-top: 2
 .intraday-panel-heading p { margin: 5px 0 0; color: #7d91ab; font-size: 10px; }
 .intraday-panel-heading > span { flex: 0 0 auto; padding: 5px 8px; border-radius: 6px; background: #edf4ff; color: #3568ba; font-size: 9px; font-weight: 800; }
 .intraday-hour-list { display: grid; gap: 8px; }
-.intraday-hour-row { display: grid; grid-template-columns: 42px minmax(100px, 1fr) 92px 92px; align-items: center; gap: 8px; font-size: 10px; }
+.intraday-hour-row { display: grid; grid-template-columns: 42px minmax(100px, 1fr) 92px 92px 68px; align-items: center; gap: 8px; font-size: 10px; }
 .intraday-hour-row > b { color: #7086a4; }
 .intraday-hour-row > span, .intraday-hour-row > small { text-align: right; font-variant-numeric: tabular-nums; }
 .intraday-hour-row > span { color: #216bd0; font-weight: 800; }
 .intraday-hour-row > small { color: #899bb3; }
+.intraday-hour-row > em { text-align: right; font-size: 9px; font-style: normal; font-weight: 800; font-variant-numeric: tabular-nums; }
 .intraday-bar-track { position: relative; height: 15px; overflow: hidden; border-radius: 5px; background: #f0f4fa; }
 .intraday-bar-track i { position: absolute; left: 0; display: block; height: 6px; border-radius: 4px; }
 .intraday-bar-current { top: 2px; background: #3684e8; }
@@ -471,6 +472,8 @@ footer { display: flex; justify-content: space-between; gap: 15px; margin-top: 2
 .intraday-formula-row { display: flex; justify-content: space-between; gap: 10px; padding: 13px 0; border-bottom: 1px solid #edf2f8; color: #6d83a0; font-size: 11px; }
 .intraday-formula-row strong { color: #1f67c7; font-size: 16px; }
 .intraday-formula-note { margin: auto 0 0; padding-top: 18px; color: #8798af; font-size: 10px; line-height: 1.65; }
+.intraday-ads-panel { margin-top: 14px; }
+.intraday-ads-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 11px; }
 .intraday-link-panel { margin-top: 14px; }
 .intraday-table-actions { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 11px; }
 .intraday-table-actions input { max-width: 380px; }
@@ -491,5 +494,5 @@ footer { display: flex; justify-content: space-between; gap: 15px; margin-top: 2
 .intraday-error { gap: 8px; }
 .intraday-error strong { color: #c14f4f; }
 .intraday-error button { padding: 9px 13px; border: 0; border-radius: 8px; background: #2869c9; color: white; font: inherit; cursor: pointer; }
-@media (max-width: 900px) { .intraday-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); } .intraday-rule { border-left: 0; border-top: 2px solid #b9cdf0; padding: 10px 0 0; } .intraday-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } .intraday-grid { grid-template-columns: 1fr; } }
-@media (max-width: 600px) { .intraday-shell { padding: 18px 12px 28px; } .intraday-header { flex-direction: column; } .intraday-header-actions { align-self: stretch; justify-content: stretch; max-width: none; } .intraday-header-actions > a, .intraday-header-actions > button { flex: 1; text-align: center; } .intraday-header-actions > small { text-align: left; } .intraday-back { align-self: stretch; text-align: center; } .intraday-controls { grid-template-columns: 1fr; } .intraday-cards { grid-template-columns: 1fr 1fr; gap: 8px; } .intraday-card { padding: 11px; } .intraday-card > strong { font-size: 18px; } .intraday-card-compare { display: block; } .intraday-card-compare b { display: block; margin-top: 3px; } .intraday-table-actions { display: grid; } .intraday-table-actions input { max-width: none; } .intraday-segment { justify-content: flex-start; } .intraday-footer { flex-direction: column; } }
+@media (max-width: 900px) { .intraday-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); } .intraday-rule { border-left: 0; border-top: 2px solid #b9cdf0; padding: 10px 0 0; } .intraday-cards, .intraday-ads-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .intraday-grid { grid-template-columns: 1fr; } }
+@media (max-width: 600px) { .intraday-shell { padding: 18px 12px 28px; } .intraday-header { flex-direction: column; } .intraday-header-actions { align-self: stretch; justify-content: stretch; max-width: none; } .intraday-header-actions > a, .intraday-header-actions > button { flex: 1; text-align: center; } .intraday-header-actions > small { text-align: left; } .intraday-back { align-self: stretch; text-align: center; } .intraday-controls { grid-template-columns: 1fr; } .intraday-cards, .intraday-ads-grid { grid-template-columns: 1fr 1fr; gap: 8px; } .intraday-hour-row { grid-template-columns: 35px minmax(80px, 1fr) 75px 75px 58px; gap: 5px; } .intraday-card { padding: 11px; } .intraday-card > strong { font-size: 18px; } .intraday-card-compare { display: block; } .intraday-card-compare b { display: block; margin-top: 3px; } .intraday-table-actions { display: grid; } .intraday-table-actions input { max-width: none; } .intraday-segment { justify-content: flex-start; } .intraday-footer { flex-direction: column; } }
