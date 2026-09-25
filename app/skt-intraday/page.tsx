@@ -60,7 +60,11 @@ function parseCsv(text: string) {
 function recordsFromCsv(text: string) {
   const rows = parseCsv(text);
   const headers = rows[0] || [];
-  return rows.slice(1).map((row) => Object.fromEntries(headers.map((header, index) => [header, row[index] || ""])));
+  return rows.slice(1).map((row) => {
+    const record: CsvRecord = Object.fromEntries(headers.map((header, index) => [header, row[index] || ""]));
+    headers.forEach((_, index) => { record[`__column_${index}`] = row[index] || ""; });
+    return record;
+  });
 }
 
 function numberValue(value: string | undefined) {
@@ -81,6 +85,10 @@ function firstValue(record: CsvRecord, names: string[]) {
     return normalizedNames.some((candidate) => normalizedKey.includes(candidate) || candidate.includes(normalizedKey));
   });
   return match ? match[1] : "";
+}
+
+function valueOrColumn(record: CsvRecord, names: string[], columnIndex: number) {
+  return firstValue(record, names) || record[`__column_${columnIndex}`] || "";
 }
 
 function normalizeDate(value: string) {
@@ -142,7 +150,7 @@ async function loadDashboardData(): Promise<DashboardData> {
     orders: numberValue(firstValue(record, ORDERS_NAMES)),
     visitors: numberValue(firstValue(record, VISITOR_NAMES)),
     search: numberValue(firstValue(record, SEARCH_NAMES)),
-    cart: numberValue(firstValue(record, CART_NAMES)),
+    cart: numberValue(valueOrColumn(record, CART_NAMES, 9)),
     products: numberValue(firstValue(record, PRODUCT_NAMES)),
   })).filter((row) => row.date);
   const linkRows = linkSource.map((record) => ({
@@ -154,7 +162,7 @@ async function loadDashboardData(): Promise<DashboardData> {
       units: numberValue(firstValue(record, UNITS_NAMES)),
       visitors: numberValue(firstValue(record, VISITOR_NAMES)),
       search: numberValue(firstValue(record, SEARCH_NAMES)),
-      cart: numberValue(firstValue(record, CART_NAMES)),
+      cart: numberValue(valueOrColumn(record, CART_NAMES, 36)),
       buyers: numberValue(firstValue(record, ORDERS_NAMES)),
     },
   })).filter((row) => row.date);
