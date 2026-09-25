@@ -7,7 +7,7 @@ const SHEET_ID = "1yuJxg2PFQgAiOjnnCZVutQm-4I1q376c8eXZOjWQLN8";
 const TIME_GID = 225938746;
 const LINK_GID = 1109512359;
 const ADS_GID = 1227209277;
-const ADS_COLUMNS = { date: 1, exposure: 16, clicks: 17, gmv: 27, spend: 29 } as const;
+const ADS_COLUMNS = { date: 1, id: 8, exposure: 16, clicks: 17, gmv: 27, spend: 29 } as const;
 
 type CsvRecord = Record<string, string>;
 type MetricKey = "sales" | "units" | "orders" | "visitors" | "search" | "cart";
@@ -16,7 +16,7 @@ type LinkMetricValues = Record<LinkMetricKey, number>;
 
 type TimeRecord = { date: string; hour: number; sales: number; units: number; orders: number; visitors: number; search: number; cart: number; products: number };
 type LinkRecord = { date: string; name: string; id: string; metrics: LinkMetricValues };
-type AdRecord = { date: string; sales: number; spend: number; exposure: number; clicks: number };
+type AdRecord = { date: string; product: boolean; sales: number; spend: number; exposure: number; clicks: number };
 type LinkSummary = { key: string; name: string; id: string; current: LinkMetricValues; previousFull: LinkMetricValues; previousComparable: LinkMetricValues };
 type DashboardData = { timeRows: TimeRecord[]; linkRows: LinkRecord[]; adsRows: AdRecord[] };
 
@@ -184,6 +184,7 @@ async function loadDashboardData(): Promise<DashboardData> {
   })).filter((row) => row.date);
   const adsRows = adsSource.map((record) => ({
     date: normalizeDate(record[`__column_${ADS_COLUMNS.date}`] || firstValue(record, ["日期", "日期"])),
+    product: Boolean((record[`__column_${ADS_COLUMNS.id}`] || firstValue(record, ["商品ID", "商品 ID"])).trim() && (record[`__column_${ADS_COLUMNS.id}`] || firstValue(record, ["商品ID", "商品 ID"])).trim() !== "-"),
     sales: numberValue(record[`__column_${ADS_COLUMNS.gmv}`] || firstValue(record, ["直接銷售金額", "直接销售金额"])),
     spend: numberValue(record[`__column_${ADS_COLUMNS.spend}`] || firstValue(record, ["花費", "花费", "廣告花費", "广告花费"])),
     exposure: numberValue(record[`__column_${ADS_COLUMNS.exposure}`] || firstValue(record, ["曝光", "曝光次數", "曝光次数"])),
@@ -204,8 +205,8 @@ function sumLinks(rows: LinkRecord[], date: string, field: LinkMetricKey) {
   return rows.filter((row) => row.date === date).reduce((sum, row) => sum + row.metrics[field], 0);
 }
 
-function sumAds(rows: AdRecord[], date: string, field: keyof Omit<AdRecord, "date">) {
-  return rows.filter((row) => row.date === date).reduce((sum, row) => sum + row[field], 0);
+function sumAds(rows: AdRecord[], date: string, field: keyof Omit<AdRecord, "date" | "product">, productOnly = false) {
+  return rows.filter((row) => row.date === date && (!productOnly || row.product)).reduce((sum, row) => sum + row[field], 0);
 }
 
 function buildLinkSummary(rows: LinkRecord[], currentDate: string, previousDate: string, coefficients: LinkMetricValues, sortMetric: LinkMetricKey) {
@@ -320,11 +321,11 @@ export default function SktIntradayPage() {
   const adMetrics = useMemo(() => {
     if (!storeMetrics || !currentDate || !previousDate) return null;
     const ratio = (numerator: number, denominator: number) => denominator ? numerator / denominator : 0;
-    const currentSales = sumAds(data.adsRows, currentDate, "sales");
+    const currentSales = sumAds(data.adsRows, currentDate, "sales", true);
     const currentSpend = sumAds(data.adsRows, currentDate, "spend");
     const currentExposure = sumAds(data.adsRows, currentDate, "exposure");
     const currentClicks = sumAds(data.adsRows, currentDate, "clicks");
-    const previousSales = sumAds(data.adsRows, previousDate, "sales") * storeMetrics.salesCoefficient;
+    const previousSales = sumAds(data.adsRows, previousDate, "sales", true) * storeMetrics.salesCoefficient;
     const previousSpend = sumAds(data.adsRows, previousDate, "spend") * storeMetrics.salesCoefficient;
     const previousExposure = sumAds(data.adsRows, previousDate, "exposure") * storeMetrics.salesCoefficient;
     const previousClicks = sumAds(data.adsRows, previousDate, "clicks") * storeMetrics.salesCoefficient;
@@ -370,7 +371,7 @@ export default function SktIntradayPage() {
     <section className="intraday-controls"><label>当前日期<select value={currentDate} onChange={(event) => { setCurrentDate(event.target.value); setPreviousDate(previousMonthDate(event.target.value)); }}>{availableDates.map((date) => <option value={date} key={date}>{date}</option>)}</select></label><label>对比日期<select value={previousDate} onChange={(event) => setPreviousDate(event.target.value)}>{availableDates.map((date) => <option value={date} key={date}>{date}</option>)}</select></label><label>截止时间<select value={cutoff} onChange={(event) => setCutoff(Number(event.target.value))}>{Array.from({ length: 24 }, (_, hour) => <option value={hour} key={hour}>包含 {String(hour).padStart(2, "0")}:00 小时</option>)}</select></label><div className="intraday-rule"><b>当前口径</b><span>{formatDate(currentDate)} 00:00～{String(cutoff).padStart(2, "0")}:59</span></div></section>
     <div className="intraday-notice"><strong>上期数据按历史系数估算</strong><span>系数来自 {formatDate(previousDate)} 店铺分时段销售数据；当前默认包含 08:00 小时。</span></div>
     <section className="intraday-cards"><MetricCard label="全店销售额" current={storeMetrics.currentSales} previous={storeMetrics.previousSales} money /><MetricCard label="全店商品数量" current={storeMetrics.currentUnits} previous={storeMetrics.previousUnits} /><MetricCard label="全店买家数" current={storeMetrics.currentOrders} previous={storeMetrics.previousOrders} /><MetricCard label="全店访客数" current={storeMetrics.currentVisitors} previous={storeMetrics.previousVisitors} /><MetricCard label="全店加购件数" current={storeMetrics.currentCart} previous={storeMetrics.previousCart} /><MetricCard label="商品链接销售额" current={sumLinks(data.linkRows, currentDate, "sales")} previous={sumLinks(data.linkRows, previousDate, "sales") * storeMetrics.linkCoefficients.sales} money /></section>
-    {adMetrics && <section className="intraday-panel intraday-ads-panel"><div className="intraday-panel-heading"><div><h2>站内广告实时环比</h2><p>广告销售占比 = 广告产品直接销售金额 ÷ 商品链接销售额；上期广告指标按销售额系数估算。</p></div><span>SKT-站内广告每日</span></div><div className="intraday-ads-grid"><MetricCard label="广告直接销售额" current={adMetrics.currentSales} previous={adMetrics.previousSales} money /><MetricCard label="广告销售占比" current={adMetrics.currentSalesShare} previous={adMetrics.previousSalesShare} formatter={formatRatio} note="上期按销售额系数估算" /><MetricCard label="站内花费" current={adMetrics.currentSpend} previous={adMetrics.previousSpend} money note="上期按销售额系数估算" /><MetricCard label="站内花费费率" current={adMetrics.currentSpendRate} previous={adMetrics.previousSpendRate} formatter={formatRatio} note="花费 ÷ 全店销售额" /><MetricCard label="CPC" current={adMetrics.currentCpc} previous={adMetrics.previousCpc} formatter={formatUnitCost} note="花费 ÷ 点击；上期按系数估算" /><MetricCard label="CPM" current={adMetrics.currentCpm} previous={adMetrics.previousCpm} formatter={formatUnitCost} note="花费 ÷ 曝光 × 1,000；上期按系数估算" /></div></section>}
+    {adMetrics && <section className="intraday-panel intraday-ads-panel"><div className="intraday-panel-heading"><div><h2>站内广告实时环比</h2><p>广告销售占比 = 有商品 ID 的广告直接销售金额 ÷ 商品链接销售额；上期广告指标按销售额系数估算。</p></div><span>SKT-站内广告每日</span></div><div className="intraday-ads-grid"><MetricCard label="广告直接销售额（产品）" current={adMetrics.currentSales} previous={adMetrics.previousSales} money /><MetricCard label="广告销售占比" current={adMetrics.currentSalesShare} previous={adMetrics.previousSalesShare} formatter={formatRatio} note="上期按销售额系数估算" /><MetricCard label="站内花费" current={adMetrics.currentSpend} previous={adMetrics.previousSpend} money note="上期按销售额系数估算" /><MetricCard label="站内花费费率" current={adMetrics.currentSpendRate} previous={adMetrics.previousSpendRate} formatter={formatRatio} note="花费 ÷ 全店销售额" /><MetricCard label="CPC" current={adMetrics.currentCpc} previous={adMetrics.previousCpc} formatter={formatUnitCost} note="花费 ÷ 点击；上期按系数估算" /><MetricCard label="CPM（按浏览数）" current={adMetrics.currentCpm} previous={adMetrics.previousCpm} formatter={formatUnitCost} note="花费 ÷ 源表浏览数 × 1,000；上期按系数估算" /></div></section>}
     <div className="intraday-grid"><HourlyTable rows={data.timeRows} currentDate={currentDate} previousDate={previousDate} cutoff={cutoff} /><section className="intraday-panel intraday-formula"><div className="intraday-panel-heading"><div><h2>本次折算参数</h2><p>用于商品链接每日数据的上期还原</p></div><span>估算</span></div><div className="intraday-formula-row"><span>销售额累计系数</span><strong>{(storeMetrics.salesCoefficient * 100).toFixed(2)}%</strong></div><div className="intraday-formula-row"><span>商品数量累计系数</span><strong>{(storeMetrics.unitsCoefficient * 100).toFixed(2)}%</strong></div><div className="intraday-formula-row"><span>访客累计系数</span><strong>{(storeMetrics.visitorsCoefficient * 100).toFixed(2)}%</strong></div><div className="intraday-formula-row"><span>搜索点击累计系数</span><strong>{(storeMetrics.searchCoefficient * 100).toFixed(2)}%</strong></div><div className="intraday-formula-row"><span>加购累计系数</span><strong>{(storeMetrics.cartCoefficient * 100).toFixed(2)}%</strong></div><div className="intraday-formula-row"><span>买家数累计系数</span><strong>{(storeMetrics.buyersCoefficient * 100).toFixed(2)}%</strong></div><p className="intraday-formula-note">上期可比值 = 上期全天值 × 对应指标累计系数。每个链接指标分别使用对应的全店分时段系数。</p></section></div>
     <section className="intraday-panel intraday-link-panel"><div className="intraday-panel-heading"><div><h2>商品链接分时段对比</h2><p>当前为实际累计数据；上期为全天链接数据按对应 SKT 系数折算。</p></div><span>{linkRows.length} 条链接</span></div><div className="intraday-table-actions"><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索链接简称或商品 ID" /><div className="intraday-segment">{LINK_METRICS.map((item) => <button type="button" className={metric === item.key ? "active" : ""} onClick={() => setMetric(item.key)} key={item.key}>{item.label}</button>)}</div></div><div className="intraday-table-wrap"><table><thead><tr><th>链接简称</th><th>{formatDate(currentDate)} 当前 · {activeMetric.label}</th><th>{formatDate(previousDate)} 上期可比</th><th>差额</th><th>差异率</th><th>口径</th></tr></thead><tbody>{linkRows.slice(0, 100).map((row) => { const current = row.current[metric]; const previous = row.previousComparable[metric]; const delta = changeRate(current, previous); return <tr key={row.key}><td><b>{row.name}</b><small>{row.id || "未填写商品 ID"}</small></td><td>{formatLinkMetric(metric, current)}</td><td>{formatLinkMetric(metric, previous)}</td><td className={current - previous >= 0 ? "positive-text" : "negative-text"}>{formatLinkMetric(metric, current - previous)}</td><td className={delta !== null && delta >= 0 ? "positive-text" : "negative-text"}>{formatPercent(delta)}</td><td><em>按历史系数估算</em></td></tr>; })}</tbody></table></div></section>
     <footer className="intraday-footer"><span>数据源：SKT-店铺分时段销售数据 + SKT-店铺链接维度每日 + SKT-站内广告每日</span><span>独立试用版 · 原全天看板未修改</span></footer>
