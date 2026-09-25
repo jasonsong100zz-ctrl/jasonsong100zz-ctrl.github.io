@@ -416,3 +416,73 @@ footer { display: flex; justify-content: space-between; gap: 15px; margin-top: 2
 @media (max-width: 760px) { .dashboard { width: min(100% - 24px, 1500px); padding-top: 16px; } .dashboard-layout { grid-template-columns: 1fr; gap: 14px; } .side-nav { position: static; display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; max-height: none; overflow: visible; padding: 9px; } .side-brand, .side-label, .side-divider, .source-panel { display: none; } .side-nav button { padding: 9px 7px; } .side-nav button strong { font-size: 11px; } .side-nav button small { display: none; } .topbar { align-items: stretch; flex-direction: column; } .primary-button { width: 100%; height: 41px; } .filter-bar { grid-template-columns: repeat(2, 1fr); } .filter-bar > div:last-of-type, .reset-button { grid-column: span 2; } .page-tabs { overflow-x: auto; } .page-tabs button { min-width: 105px; } .sync-state { display: none; } .metric-grid { grid-template-columns: 1fr 1fr; } .metric-grid.secondary { margin-top: 10px; } .brand-main { align-items: flex-start; flex-direction: column; } .brand-main div { text-align: left; } .brand-stats.lower { grid-template-columns: repeat(2,1fr); row-gap: 10px; } .brand-row-head { align-items: flex-start; flex-direction: column; gap: 8px; } .brand-row-metrics { justify-content: flex-start; gap: 9px; } .daily-compare-bars { height: 176px; gap: 2px; } .bar-slot b { font-size: 6px; } .fee-chart-card { min-height: 190px; } .insight { align-items: flex-start; flex-direction: column; gap: 7px; padding: 13px; } .section-title { flex-wrap: wrap; } .section-title em { margin-left: 0; } footer { align-items: flex-start; flex-direction: column; } .gate-card { padding: 42px 23px; } .gate-card::before { margin: -42px -23px 34px; } .password-row { flex-direction: column; } .password-row button { height: 44px; } }
 @media (max-width: 760px) { .trend-drawer { padding: 18px 13px; } .trend-drawer-head h2 { font-size: 17px; } .trend-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .trend-chart-heading { display: block; } .trend-metric-select { margin-top: 11px; } .trend-metric-select select { width: min(100%, 320px); } .trend-chart-wrap { padding-left: 45px; } .trend-chart-y-axis { right: auto; width: 40px; font-size: 8px; } .trend-chart { height: 220px; } .trend-data-label { font-size: 7px; } .trend-day-table-wrap { overflow: visible; } .trend-day-table { font-size: 9px; } .trend-day-table th, .trend-day-table td { padding: 7px 4px; } }
 @media (prefers-reduced-motion: reduce) { *,*::before,*::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; } }
+.intraday-shell { min-height: 100vh; padding: 28px clamp(16px, 4vw, 64px) 38px; color: #14233b; background: linear-gradient(135deg, #f4f8ff 0%, #fbfcff 48%, #eef5ff 100%); }
+.intraday-header { display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; max-width: 1320px; margin: 0 auto 22px; }
+.intraday-eyebrow { margin: 0 0 8px; color: #2664d8; font-size: 11px; font-weight: 900; letter-spacing: .16em; }
+.intraday-header h1 { margin: 0; font-size: clamp(26px, 4vw, 42px); letter-spacing: -.04em; }
+.intraday-subtitle { margin: 10px 0 0; color: #6b7e99; font-size: 13px; }
+.intraday-back { flex: 0 0 auto; padding: 10px 14px; border: 1px solid #cddcf2; border-radius: 10px; background: #fff; color: #2664d8; font-size: 12px; font-weight: 800; text-decoration: none; }
+.intraday-controls, .intraday-notice, .intraday-cards, .intraday-grid, .intraday-panel, .intraday-footer { max-width: 1320px; margin-left: auto; margin-right: auto; }
+.intraday-controls { display: grid; grid-template-columns: repeat(3, minmax(150px, 1fr)) minmax(210px, 1.2fr); gap: 10px; padding: 13px; border: 1px solid #dbe6f5; border-radius: 14px; background: rgb(255 255 255 / 88%); box-shadow: 0 8px 22px rgb(66 97 145 / 7%); }
+.intraday-controls label { display: grid; gap: 5px; color: #6f83a0; font-size: 10px; font-weight: 800; }
+.intraday-controls select, .intraday-table-actions input { width: 100%; min-height: 38px; padding: 0 10px; border: 1px solid #d6e1f0; border-radius: 9px; background: #fff; color: #1a2d47; font: inherit; font-size: 12px; }
+.intraday-rule { display: flex; flex-direction: column; justify-content: center; padding: 0 12px; border-left: 2px solid #b9cdf0; color: #637b9c; font-size: 11px; }
+.intraday-rule b { color: #2664d8; font-size: 10px; }
+.intraday-notice { display: flex; gap: 9px; align-items: center; margin-top: 14px; padding: 11px 14px; border: 1px solid #f0d8a4; border-radius: 10px; background: #fff9eb; color: #866a31; font-size: 11px; }
+.intraday-notice strong { color: #9c6d12; }
+.intraday-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 11px; margin-top: 14px; }
+.intraday-card { padding: 15px; border: 1px solid #dbe6f5; border-radius: 13px; background: #fff; box-shadow: 0 8px 22px rgb(66 97 145 / 7%); }
+.intraday-card-label { color: #6d83a2; font-size: 11px; font-weight: 800; }
+.intraday-card > strong { display: block; margin: 10px 0 8px; color: #132b4b; font-size: clamp(20px, 2.4vw, 29px); letter-spacing: -.04em; }
+.intraday-card-compare { display: flex; justify-content: space-between; gap: 8px; padding-top: 8px; border-top: 1px solid #edf2f8; color: #7890ad; font-size: 10px; }
+.intraday-card-compare b { color: #435d7f; }
+.intraday-delta { margin-top: 10px; font-size: 15px; font-weight: 900; }
+.intraday-delta.positive, .positive-text { color: #16835f; }
+.intraday-delta.negative, .negative-text { color: #d05454; }
+.intraday-card small { display: block; margin-top: 6px; color: #9aabc0; font-size: 9px; }
+.intraday-grid { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(280px, .85fr); gap: 12px; margin-top: 14px; }
+.intraday-panel { min-width: 0; padding: 16px; border: 1px solid #dbe6f5; border-radius: 14px; background: #fff; box-shadow: 0 8px 22px rgb(66 97 145 / 6%); }
+.intraday-panel-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 15px; }
+.intraday-panel-heading h2 { margin: 0; color: #183354; font-size: 16px; }
+.intraday-panel-heading p { margin: 5px 0 0; color: #7d91ab; font-size: 10px; }
+.intraday-panel-heading > span { flex: 0 0 auto; padding: 5px 8px; border-radius: 6px; background: #edf4ff; color: #3568ba; font-size: 9px; font-weight: 800; }
+.intraday-hour-list { display: grid; gap: 8px; }
+.intraday-hour-row { display: grid; grid-template-columns: 42px minmax(100px, 1fr) 92px 92px; align-items: center; gap: 8px; font-size: 10px; }
+.intraday-hour-row > b { color: #7086a4; }
+.intraday-hour-row > span, .intraday-hour-row > small { text-align: right; font-variant-numeric: tabular-nums; }
+.intraday-hour-row > span { color: #216bd0; font-weight: 800; }
+.intraday-hour-row > small { color: #899bb3; }
+.intraday-bar-track { position: relative; height: 15px; overflow: hidden; border-radius: 5px; background: #f0f4fa; }
+.intraday-bar-track i { position: absolute; left: 0; display: block; height: 6px; border-radius: 4px; }
+.intraday-bar-current { top: 2px; background: #3684e8; }
+.intraday-bar-previous { bottom: 2px; background: #b9c9df; }
+.intraday-legend { display: flex; gap: 15px; margin-top: 15px; color: #8395ac; font-size: 9px; }
+.intraday-legend i { display: inline-block; width: 7px; height: 7px; margin-right: 4px; border-radius: 2px; }
+.current-dot { background: #3684e8; }
+.previous-dot { background: #b9c9df; }
+.intraday-formula { display: flex; flex-direction: column; }
+.intraday-formula-row { display: flex; justify-content: space-between; gap: 10px; padding: 13px 0; border-bottom: 1px solid #edf2f8; color: #6d83a0; font-size: 11px; }
+.intraday-formula-row strong { color: #1f67c7; font-size: 16px; }
+.intraday-formula-note { margin: auto 0 0; padding-top: 18px; color: #8798af; font-size: 10px; line-height: 1.65; }
+.intraday-link-panel { margin-top: 14px; }
+.intraday-table-actions { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 11px; }
+.intraday-table-actions input { max-width: 380px; }
+.intraday-segment { display: flex; gap: 4px; padding: 3px; border-radius: 8px; background: #f0f4fa; }
+.intraday-segment button { border: 0; padding: 7px 12px; border-radius: 6px; background: transparent; color: #7386a0; font: inherit; font-size: 10px; font-weight: 800; cursor: pointer; }
+.intraday-segment button.active { background: #fff; color: #2869c9; box-shadow: 0 1px 5px rgb(44 85 135 / 12%); }
+.intraday-table-wrap { overflow: auto; max-height: 570px; border: 1px solid #e3ebf5; border-radius: 9px; }
+.intraday-table-wrap table { width: 100%; min-width: 760px; border-collapse: collapse; font-size: 11px; }
+.intraday-table-wrap th { position: sticky; top: 0; z-index: 1; padding: 10px 9px; background: #f7faff; color: #7388a4; text-align: right; font-size: 9px; }
+.intraday-table-wrap th:first-child, .intraday-table-wrap td:first-child { text-align: left; }
+.intraday-table-wrap td { padding: 9px; border-top: 1px solid #edf2f8; color: #39516f; text-align: right; font-variant-numeric: tabular-nums; }
+.intraday-table-wrap td b, .intraday-table-wrap td small { display: block; }
+.intraday-table-wrap td b { color: #1f3a5d; font-size: 11px; }
+.intraday-table-wrap td small { margin-top: 3px; color: #94a3b8; font-size: 8px; }
+.intraday-table-wrap td em { padding: 4px 5px; border-radius: 5px; background: #fff6dc; color: #9b721d; font-size: 8px; font-style: normal; font-weight: 800; white-space: nowrap; }
+.intraday-footer { display: flex; justify-content: space-between; gap: 12px; margin-top: 16px; color: #8a9bb0; font-size: 9px; }
+.intraday-loading, .intraday-error { display: grid; place-items: center; min-height: 80vh; color: #5e7595; font-size: 14px; }
+.intraday-error { gap: 8px; }
+.intraday-error strong { color: #c14f4f; }
+.intraday-error button { padding: 9px 13px; border: 0; border-radius: 8px; background: #2869c9; color: white; font: inherit; cursor: pointer; }
+@media (max-width: 900px) { .intraday-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); } .intraday-rule { border-left: 0; border-top: 2px solid #b9cdf0; padding: 10px 0 0; } .intraday-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } .intraday-grid { grid-template-columns: 1fr; } }
+@media (max-width: 600px) { .intraday-shell { padding: 18px 12px 28px; } .intraday-header { flex-direction: column; } .intraday-back { align-self: stretch; text-align: center; } .intraday-controls { grid-template-columns: 1fr; } .intraday-cards { grid-template-columns: 1fr 1fr; gap: 8px; } .intraday-card { padding: 11px; } .intraday-card > strong { font-size: 18px; } .intraday-card-compare { display: block; } .intraday-card-compare b { display: block; margin-top: 3px; } .intraday-table-actions { display: grid; } .intraday-table-actions input { max-width: none; } .intraday-footer { flex-direction: column; } }
