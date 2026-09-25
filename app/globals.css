@@ -56,6 +56,9 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .side-nav button small { color: #9aa8ba; font-size: 10px; }
 .side-nav button.active { background: color-mix(in srgb, var(--brand-color, var(--blue)) 10%, white); color: var(--brand-color, var(--blue)); }
 .side-nav button.active small { color: color-mix(in srgb, var(--brand-color, var(--blue)) 72%, #657891); }
+.intraday-nav-link { display: grid; gap: 3px; margin: 2px 0; padding: 10px 9px; border: 1px solid #cfe0f8; border-radius: 8px; background: #f4f8ff; color: #2869c9; text-decoration: none; }
+.intraday-nav-link strong { font-size: 13px; }
+.intraday-nav-link small { color: #7891b4; font-size: 10px; }
 .side-divider { height: 1px; margin: 8px 6px; background: var(--line); }
 .source-panel { margin: 0 4px 2px; padding: 10px; border: 1px solid #d9e4f2; border-radius: 12px; background: #f8fbff; }
 .source-panel summary { cursor: pointer; list-style: none; color: var(--blue); font-size: 12px; font-weight: 800; }
@@ -422,6 +425,10 @@ footer { display: flex; justify-content: space-between; gap: 15px; margin-top: 2
 .intraday-header h1 { margin: 0; font-size: clamp(26px, 4vw, 42px); letter-spacing: -.04em; }
 .intraday-subtitle { margin: 10px 0 0; color: #6b7e99; font-size: 13px; }
 .intraday-back { flex: 0 0 auto; padding: 10px 14px; border: 1px solid #cddcf2; border-radius: 10px; background: #fff; color: #2664d8; font-size: 12px; font-weight: 800; text-decoration: none; }
+.intraday-header-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; max-width: 390px; }
+.intraday-header-actions > small { flex-basis: 100%; color: #8395ac; font-size: 10px; text-align: right; }
+.intraday-refresh { padding: 10px 14px; border: 0; border-radius: 10px; background: #2869c9; color: #fff; font-size: 12px; font-weight: 800; }
+.intraday-refresh:disabled { cursor: wait; opacity: .65; }
 .intraday-controls, .intraday-notice, .intraday-cards, .intraday-grid, .intraday-panel, .intraday-footer { max-width: 1320px; margin-left: auto; margin-right: auto; }
 .intraday-controls { display: grid; grid-template-columns: repeat(3, minmax(150px, 1fr)) minmax(210px, 1.2fr); gap: 10px; padding: 13px; border: 1px solid #dbe6f5; border-radius: 14px; background: rgb(255 255 255 / 88%); box-shadow: 0 8px 22px rgb(66 97 145 / 7%); }
 .intraday-controls label { display: grid; gap: 5px; color: #6f83a0; font-size: 10px; font-weight: 800; }
@@ -467,7 +474,7 @@ footer { display: flex; justify-content: space-between; gap: 15px; margin-top: 2
 .intraday-link-panel { margin-top: 14px; }
 .intraday-table-actions { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 11px; }
 .intraday-table-actions input { max-width: 380px; }
-.intraday-segment { display: flex; gap: 4px; padding: 3px; border-radius: 8px; background: #f0f4fa; }
+.intraday-segment { display: flex; justify-content: flex-end; gap: 4px; flex-wrap: wrap; padding: 3px; border-radius: 8px; background: #f0f4fa; }
 .intraday-segment button { border: 0; padding: 7px 12px; border-radius: 6px; background: transparent; color: #7386a0; font: inherit; font-size: 10px; font-weight: 800; cursor: pointer; }
 .intraday-segment button.active { background: #fff; color: #2869c9; box-shadow: 0 1px 5px rgb(44 85 135 / 12%); }
 .intraday-table-wrap { overflow: auto; max-height: 570px; border: 1px solid #e3ebf5; border-radius: 9px; }
@@ -485,4 +492,4 @@ footer { display: flex; justify-content: space-between; gap: 15px; margin-top: 2
 .intraday-error strong { color: #c14f4f; }
 .intraday-error button { padding: 9px 13px; border: 0; border-radius: 8px; background: #2869c9; color: white; font: inherit; cursor: pointer; }
 @media (max-width: 900px) { .intraday-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); } .intraday-rule { border-left: 0; border-top: 2px solid #b9cdf0; padding: 10px 0 0; } .intraday-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } .intraday-grid { grid-template-columns: 1fr; } }
-@media (max-width: 600px) { .intraday-shell { padding: 18px 12px 28px; } .intraday-header { flex-direction: column; } .intraday-back { align-self: stretch; text-align: center; } .intraday-controls { grid-template-columns: 1fr; } .intraday-cards { grid-template-columns: 1fr 1fr; gap: 8px; } .intraday-card { padding: 11px; } .intraday-card > strong { font-size: 18px; } .intraday-card-compare { display: block; } .intraday-card-compare b { display: block; margin-top: 3px; } .intraday-table-actions { display: grid; } .intraday-table-actions input { max-width: none; } .intraday-footer { flex-direction: column; } }
+@media (max-width: 600px) { .intraday-shell { padding: 18px 12px 28px; } .intraday-header { flex-direction: column; } .intraday-header-actions { align-self: stretch; justify-content: stretch; max-width: none; } .intraday-header-actions > a, .intraday-header-actions > button { flex: 1; text-align: center; } .intraday-header-actions > small { text-align: left; } .intraday-back { align-self: stretch; text-align: center; } .intraday-controls { grid-template-columns: 1fr; } .intraday-cards { grid-template-columns: 1fr 1fr; gap: 8px; } .intraday-card { padding: 11px; } .intraday-card > strong { font-size: 18px; } .intraday-card-compare { display: block; } .intraday-card-compare b { display: block; margin-top: 3px; } .intraday-table-actions { display: grid; } .intraday-table-actions input { max-width: none; } .intraday-segment { justify-content: flex-start; } .intraday-footer { flex-direction: column; } }
