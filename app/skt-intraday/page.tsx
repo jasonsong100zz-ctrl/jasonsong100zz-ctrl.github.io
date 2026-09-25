@@ -76,7 +76,10 @@ function firstValue(record: CsvRecord, names: string[]) {
   const name = names.find((candidate) => Object.prototype.hasOwnProperty.call(record, candidate));
   if (name) return record[name];
   const normalizedNames = names.map(normalizeHeader);
-  const match = Object.entries(record).find(([key]) => normalizedNames.includes(normalizeHeader(key)));
+  const match = Object.entries(record).find(([key]) => {
+    const normalizedKey = normalizeHeader(key);
+    return normalizedNames.some((candidate) => normalizedKey.includes(candidate) || candidate.includes(normalizedKey));
+  });
   return match ? match[1] : "";
 }
 
