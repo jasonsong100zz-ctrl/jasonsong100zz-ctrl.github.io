@@ -23,7 +23,7 @@ const ORDERS_NAMES = ["買家(全部訂單)", "买家(全部订单)", "已下訂
 const PRODUCT_NAMES = ["被購買的商品", "被购买的商品"];
 const VISITOR_NAMES = ["商品訪客數", "商品访客数", "訪客數", "访客数", "访客"];
 const SEARCH_NAMES = ["搜尋點擊", "搜寻点击", "搜索点击", "搜索點擊"];
-const CART_NAMES = ["入購物車(件數)", "入购物车(件数)", "入購物車(件)", "入购物车(件)", "加購件數", "加购件数", "加購數", "加购数"];
+const CART_NAMES = ["加入購物車(件數)", "加入购物车(件数)", "加入購物車(件)", "加入购物车(件)", "入購物車(件數)", "入购物车(件数)", "入購物車(件)", "入购物车(件)", "加購件數", "加购件数", "加購數", "加购数"];
 const LINK_METRIC_KEYS: LinkMetricKey[] = ["sales", "units", "visitors", "search", "cart", "buyers"];
 const LINK_METRICS: Array<{ key: LinkMetricKey; label: string; money?: boolean }> = [
   { key: "sales", label: "销售额", money: true },
