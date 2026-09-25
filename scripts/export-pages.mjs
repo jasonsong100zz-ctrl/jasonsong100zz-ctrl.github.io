@@ -27,7 +27,7 @@ await cp(sourceDirectory, outputDirectory, { recursive: true });
 const workerUrl = pathToFileURL(workerFile);
 workerUrl.searchParams.set("export", `${Date.now()}`);
 const { default: worker } = await import(workerUrl.href);
-const routes = ["/", "/skt-intraday/"];
+const routes = ["/", "/skt-intraday"];
 for (const route of routes) {
   const response = await worker.fetch(
     new Request(new URL(route, siteUrl), {
