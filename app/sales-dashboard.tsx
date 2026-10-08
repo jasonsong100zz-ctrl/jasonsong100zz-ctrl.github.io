@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, FormEvent, useEffect, useMemo, useState } from "react";
+import { IndustryShopRankingPage } from "./industry-shop-ranking";
 
 const SHEET_ID = "1yuJxg2PFQgAiOjnnCZVutQm-4I1q376c8eXZOjWQLN8";
 const DEFAULT_TWD_TO_CNY = 0.21;
@@ -10,7 +11,7 @@ const PASSWORD_HASH =
 const csvInFlight = new Map<string, Promise<string[][]>>();
 
 type BrandKey = "SKT" | "G2G" | "TP";
-type PageKey = "overview" | "category" | "shops" | "link" | "offsite" | "ads" | "channels";
+type PageKey = "overview" | "category" | "shops" | "link" | "offsite" | "ads" | "channels" | "industry";
 type GvizRow = { c: Array<{ v?: unknown } | null> };
 type MetricRow = {
   key: string;
@@ -252,6 +253,7 @@ const PAGE_LABELS: Array<{ key: PageKey; label: string; note: string; number: st
   { key: "offsite", label: "站外广告数据", note: "站外投放与链接经营", number: "05" },
   { key: "ads", label: "广告数据", note: "站内投放效率", number: "06" },
   { key: "channels", label: "线上 / 线下 SKU", note: "销量差距与环比", number: "07" },
+  { key: "industry", label: "行业排名", note: "Beauty 店铺排名", number: "08" },
 ];
 
 const SHOP_DAILY_CONFIGS: ShopDailyConfig[] = [
@@ -2768,12 +2770,13 @@ export function SalesDashboard() {
 
   const currentPage = PAGE_LABELS.find((item) => item.key === page) || PAGE_LABELS[0];
   const comparisonLabel = `环比 ${rangeLabel(previousRange)}`;
-  return <main className="dashboard">
+  return <main className={page === "industry" ? "dashboard industry-active" : "dashboard"}>
     <div className="currency-note"><span>金额单位：人民币 CNY</span><small>源表 TWD 金额按运营口径 1 TWD = 0.21 CNY 换算；目标值保持人民币</small></div>
     <div className="dashboard-layout"><aside className="side-nav"><div className="side-brand"><span>TW / SP</span><b>品牌分析室</b></div><p className="side-label">看板入口</p><button className={brand === "ALL" && page === "overview" ? "active" : ""} onClick={() => { setBrand("ALL"); setPage("overview"); }}><strong>总览</strong><small>三品牌经营总览</small></button>{BRANDS.map((item) => <button key={item.key} style={{ "--brand-color": BRAND_COLORS[item.key] } as React.CSSProperties} className={brand === item.key && page === "overview" ? "active" : ""} onClick={() => { setBrand(item.key); setPage("overview"); }}><strong>{item.key}</strong><small>{item.name}</small></button>)}<div className="side-divider" /><button className={page === "shops" ? "active" : ""} onClick={() => { setBrand("ALL"); setPage("shops"); }}><strong>店铺维度数据</strong><small>访客、销售与转化</small></button><button className={page === "channels" ? "active" : ""} onClick={() => { setBrand("ALL"); setPage("channels"); }}><strong>线上 / 线下 SKU</strong><small>销量环比与差距</small></button><a className="intraday-nav-link" href="/skt-intraday"><strong>SKT 分时段试用</strong><small>截止时段与历史系数</small></a><div className="side-divider" /><DataSourceLinks /></aside><div className="dashboard-content">
     <header className="topbar"><div><p className="eyebrow">SALES & COST EFFICIENCY</p><h1>台湾线上销售分析</h1><p className="subtitle">聚焦费用投入对 GMV 的影响 · SKT / G2G / TP · {rangeLabel(currentRange)} 对比 {rangeLabel(previousRange)}</p></div><button className="primary-button" onClick={() => setRefresh((value) => value + 1)}>＋ 更新销售数据</button></header>
     <section className="filter-bar"><div><label>品牌</label><select value={brand} onChange={(event) => setBrand(event.target.value as "ALL" | BrandKey)}><option value="ALL">全部品牌</option>{BRANDS.map((item) => <option value={item.key} key={item.key}>{item.key} · {item.name}</option>)}</select></div><div><label>主日期从</label><input type="date" value={currentRange.start} onChange={(event) => setCurrentRange((value) => ({ ...value, start: event.target.value }))} /></div><div><label>主日期到</label><input type="date" value={currentRange.end} onChange={(event) => setCurrentRange((value) => ({ ...value, end: event.target.value }))} /></div><div><label>环比日期从</label><input type="date" value={previousRange.start} onChange={(event) => setPreviousRange((value) => ({ ...value, start: event.target.value }))} /></div><div><label>环比日期到</label><input type="date" value={previousRange.end} onChange={(event) => setPreviousRange((value) => ({ ...value, end: event.target.value }))} /></div><div><label>商品ID / ID</label><input value={productId} onChange={(event) => setProductId(event.target.value)} placeholder="输入商品ID / ID" /></div><div><label>产品名</label><input value={product} onChange={(event) => setProduct(event.target.value)} placeholder="搜索产品名" /></div><div><label>品类</label><select value={category} onChange={(event) => setCategory(event.target.value)}><option value="">全部品类</option>{options.categories.map((item) => <option key={item}>{item}</option>)}</select></div><button className="reset-button" onClick={resetFilters}>重置筛选</button></section>
     <nav className="page-tabs">{PAGE_LABELS.map((item) => <button key={item.key} className={page === item.key ? "active" : ""} onClick={() => setPage(item.key)}><b>{item.number}</b><span>{item.label}</span><small>{item.note}</small></button>)}<span className="sync-state"><i className={error || offsiteError || shopError ? "error-dot" : ""} />{loading || offsiteLoading || shopLoading ? "同步中" : "数据已同步"}</span></nav>
+    {page === "industry" && <IndustryShopRankingPage />}
     {error && <div className="data-alert"><b>数据同步失败</b><span>{error}</span><button onClick={() => setRefresh((value) => value + 1)}>重新同步</button></div>}
     {offsiteError && <div className="data-alert"><b>站外广告数据同步失败</b><span>{offsiteError}</span><button onClick={() => setRefresh((value) => value + 1)}>重新同步</button></div>}
     {page === "shops" && <ShopPage rows={shopRows} brand={brand} currentRange={currentRange} previousRange={previousRange} loading={shopLoading} error={shopError} />}
@@ -2792,7 +2795,7 @@ export function SalesDashboard() {
         </>}
       </>}
       {page === "offsite" && <section className="data-page"><div className="section-title"><span>05</span><div><h2>站外广告数据</h2><p>经营数据按商品ID / ID回填现有链接明细；广告数据来自三品牌站外投放源表。</p></div><em>{offsiteLoading ? "同步中" : `${filteredOffsiteRows.length} 条明细`}</em></div>{offsiteLoading && offsiteRows.length === 0 ? <div className="loading-state"><span className="loading-mark" /><div><strong>正在同步站外广告数据</strong><p>读取站外投放表和产品 map</p></div></div> : <OffsiteTable rows={filteredOffsiteRows} />}</section>}
-      {page !== "overview" && page !== "shops" && page !== "channels" && page !== "offsite" && <section className="data-page"><div className="section-title"><span>{currentPage.number}</span><div><h2>{currentPage.label}</h2><p>{page === "category" ? "点击品类名称查看该品类链接明细；使用“查看趋势”查看每日趋势。" : currentPage.note} · 已应用品牌、日期范围、商品ID、产品名和品类筛选。</p></div><em>{visible.reduce((sum, item) => sum + (page === "category" ? item.category.length : page === "link" ? item.links.length : item.ads.length), 0)} 条明细</em></div><Table rows={rowsFor(page)} type={page} onCategorySelect={selectCategoryLinks} offsiteRows={offsiteRows} dailyRows={visible.flatMap((item) => item.dailyLinks)} previousMonthRows={visible.flatMap((item) => item.previousMonthDailyLinks)} currentRange={currentRange} /></section>}
+      {page !== "overview" && page !== "shops" && page !== "channels" && page !== "offsite" && page !== "industry" && <section className="data-page"><div className="section-title"><span>{currentPage.number}</span><div><h2>{currentPage.label}</h2><p>{page === "category" ? "点击品类名称查看该品类链接明细；使用“查看趋势”查看每日趋势。" : currentPage.note} · 已应用品牌、日期范围、商品ID、产品名和品类筛选。</p></div><em>{visible.reduce((sum, item) => sum + (page === "category" ? item.category.length : page === "link" ? item.links.length : item.ads.length), 0)} 条明细</em></div><Table rows={rowsFor(page)} type={page} onCategorySelect={selectCategoryLinks} offsiteRows={offsiteRows} dailyRows={visible.flatMap((item) => item.dailyLinks)} previousMonthRows={visible.flatMap((item) => item.previousMonthDailyLinks)} currentRange={currentRange} /></section>}
     </>}
     <footer><span>数据源：台湾 SP 三品牌数据表</span><span>综合费比 / 综合 ROI 已按站内广告 + 站外广告总费用计算</span></footer>
     </div></div>
