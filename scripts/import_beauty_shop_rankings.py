@@ -18,6 +18,7 @@ from openpyxl import load_workbook
 
 
 FILE_PREFIX = "[ExportReport]BrandPortal_MarketIntelligence_Shop+Ranking_"
+OUTSIDE_TOP10_HEADER = "My shop outside the Top-10 ranks"
 SHEETS = {
     "sales": ("By Sales", "Sales(NT$)", "Sales(USD)"),
     "units": ("By Units Sold", "Units Sold", None),
@@ -86,7 +87,13 @@ def rows_for_month(path: Path, month: str) -> dict[str, list[dict[str, object]]]
         metric_rows: list[dict[str, object]] = []
         seen_urls: set[str] = set()
         ranked_count = 0
+        outside_top10_section = False
+        outside_top10_position = 0
         for values in worksheet.iter_rows(min_row=2, values_only=True):
+            if any(str(value).strip() == OUTSIDE_TOP10_HEADER for value in values if value is not None):
+                outside_top10_section = True
+                continue
+
             raw_url = values[indices["Shop Link"]]
             if not raw_url:
                 continue
@@ -100,10 +107,18 @@ def rows_for_month(path: Path, month: str) -> dict[str, list[dict[str, object]]]
             if rank_text.isdigit():
                 rank: int | None = int(rank_text)
                 rank_status = "ranked"
+                rank_basis = "source"
                 ranked_count += 1
             elif rank_text == "-":
-                rank = None
-                rank_status = "outsideTop10"
+                if outside_top10_section:
+                    outside_top10_position += 1
+                    rank = 10 + outside_top10_position
+                    rank_status = "ranked"
+                    rank_basis = "orderedList"
+                else:
+                    rank = None
+                    rank_status = "outsideTop10"
+                    rank_basis = None
             else:
                 raise ValueError(f"{path.name}/{sheet_name}: unsupported rank {raw_rank!r}")
 
@@ -113,6 +128,8 @@ def rows_for_month(path: Path, month: str) -> dict[str, list[dict[str, object]]]
                 "shopUrl": shop_url,
                 "rank": rank,
                 "rankStatus": rank_status,
+                "rankBasis": rank_basis,
+                "sourceRank": rank_text,
                 "rankChange": (
                     str(values[indices["Change of Rank"]]).strip()
                     if values[indices["Change of Rank"]] is not None
@@ -127,6 +144,11 @@ def rows_for_month(path: Path, month: str) -> dict[str, list[dict[str, object]]]
 
         if ranked_count != 10:
             raise ValueError(f"{path.name}/{sheet_name}: expected 10 ranked shops, found {ranked_count}")
+        if outside_top10_position < 10:
+            raise ValueError(
+                f"{path.name}/{sheet_name}: expected at least 10 ordered rows after "
+                f"{OUTSIDE_TOP10_HEADER!r}, found {outside_top10_position}"
+            )
         result[metric] = metric_rows
 
     workbook.close()
