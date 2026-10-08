@@ -293,42 +293,8 @@ export function IndustryShopRankingPage() {
         })}
       </div>
 
-      <section className="industry-section-card">
-        <div className="industry-section-heading"><div><h3>历史排名趋势</h3><p>纵轴倒序排列，#1 在最上方；Top10 后的店铺按源表顺序编为第 11 名起。</p></div><span>{monthLabel(months[0])}–{monthLabel(months[months.length - 1])}</span></div>
-        <div className="industry-chart-legend">{OWNED_SHOPS.map((shop) => <span key={shop.key} style={{ "--industry-brand-color": shop.color } as React.CSSProperties}><i className={shop.marker} />{shop.name}</span>)}<b>{METRICS.find((item) => item.key === metric)?.label} 排名</b></div>
-        <div className="industry-chart-scroll">
-          <svg className="industry-rank-chart" viewBox={`0 0 ${CHART.width} ${CHART.height}`} role="img" aria-label={`Glad2Glow 与 SKINTIFIC 的 ${METRICS.find((item) => item.key === metric)?.label} 历史排名趋势，第一名位于顶部`}>
-            <title>Glad2Glow 与 SKINTIFIC 的历史排名趋势</title>
-            <desc>前十名使用源表名次，其后按源表排序顺序编号。未列入该序列的月份不连接折线。</desc>
-            {chartTicks.map((rank) => {
-              const y = CHART.top + ((rank - 1) / (chartMaxRank - 1)) * (CHART.height - CHART.top - CHART.bottom);
-              return <g key={rank}><line className="industry-chart-grid" x1={CHART.left} x2={CHART.width - CHART.right} y1={y} y2={y} /><text className="industry-chart-axis" x={CHART.left - 12} y={y + 4} textAnchor="end">#{rank}</text></g>;
-            })}
-            {months.map((month, index) => {
-              const x = months.length < 2
-                ? (CHART.left + CHART.width - CHART.right) / 2
-                : CHART.left + index * (CHART.width - CHART.left - CHART.right) / (months.length - 1);
-              return <text className="industry-chart-axis" x={x} y={CHART.height - 10} textAnchor="middle" key={month}>{monthLabel(month).slice(5)}月</text>;
-            })}
-            {trendSeries.map(({ shop, segments }) => <g key={shop.key}>
-              {segments.map((segment, index) => <path className={`industry-chart-line ${shop.key === "G2G" ? "dashed" : ""}`} stroke={shop.color} d={segment.map((point, pointIndex) => `${pointIndex === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ")} key={`${shop.key}-${index}`} />)}
-              {segments.flat().map((point) => <g key={`${shop.key}-${point.month}`}>
-                {shop.marker === "circle"
-                  ? <circle className="industry-chart-point" cx={point.x} cy={point.y} r="5" stroke={shop.color} tabIndex={0} aria-label={`${shop.name}，${monthLabel(point.month)}，排名第 ${point.row?.rank}`}>
-                    <title>{`${shop.name} · ${monthLabel(point.month)} · #${point.row?.rank}`}</title>
-                  </circle>
-                  : <rect className="industry-chart-point" x={point.x - 5} y={point.y - 5} width="10" height="10" stroke={shop.color} tabIndex={0} aria-label={`${shop.name}，${monthLabel(point.month)}，排名第 ${point.row?.rank}`}>
-                    <title>{`${shop.name} · ${monthLabel(point.month)} · #${point.row?.rank}`}</title>
-                  </rect>}
-              </g>)}
-            </g>)}
-          </svg>
-        </div>
-        {availableRankCount === 0 && <div className="industry-empty-note">所选指标下，关注店铺没有可绘制的排名记录。</div>}
-        <p className="industry-chart-note">Top10 后名单按源表行序连续编排；未出现在某月源文件中的店铺不推断排名。</p>
-      </section>
-
       <div className="industry-insight-grid">
+        <div className="industry-insight-column">
         <section className="industry-section-card">
           <div className="industry-section-heading"><div><h3>品牌入榜频次</h3><p>频次只统计该店在源文件有记录的月份；未收录月份不计为未入榜。</p></div><span>{monthLabel(selectedMonth)} 快照</span></div>
           <div className="industry-table-wrap">
@@ -341,6 +307,42 @@ export function IndustryShopRankingPage() {
             </table>
           </div>
         </section>
+
+        <section className="industry-section-card industry-trend-card">
+          <div className="industry-section-heading"><div><h3>历史排名趋势</h3><p>纵轴倒序排列，#1 在最上方；Top10 后按源表顺序编为第 11 名起。</p></div><span>{monthLabel(months[0])}–{monthLabel(months[months.length - 1])}</span></div>
+          <div className="industry-chart-legend">{OWNED_SHOPS.map((shop) => <span key={shop.key} style={{ "--industry-brand-color": shop.color } as React.CSSProperties}><i className={shop.marker} />{shop.name}</span>)}<b>{METRICS.find((item) => item.key === metric)?.label} 排名</b></div>
+          <div className="industry-chart-scroll">
+            <svg className="industry-rank-chart" viewBox={`0 0 ${CHART.width} ${CHART.height}`} role="img" aria-label={`Glad2Glow 与 SKINTIFIC 的 ${METRICS.find((item) => item.key === metric)?.label} 历史排名趋势，第一名位于顶部`}>
+              <title>Glad2Glow 与 SKINTIFIC 的历史排名趋势</title>
+              <desc>前十名使用源表名次，其后按源表排序顺序编号。未列入该序列的月份不连接折线。</desc>
+              {chartTicks.map((rank) => {
+                const y = CHART.top + ((rank - 1) / (chartMaxRank - 1)) * (CHART.height - CHART.top - CHART.bottom);
+                return <g key={rank}><line className="industry-chart-grid" x1={CHART.left} x2={CHART.width - CHART.right} y1={y} y2={y} /><text className="industry-chart-axis" x={CHART.left - 12} y={y + 4} textAnchor="end">#{rank}</text></g>;
+              })}
+              {months.map((month, index) => {
+                const x = months.length < 2
+                  ? (CHART.left + CHART.width - CHART.right) / 2
+                  : CHART.left + index * (CHART.width - CHART.left - CHART.right) / (months.length - 1);
+                return <text className="industry-chart-axis" x={x} y={CHART.height - 10} textAnchor="middle" key={month}>{monthLabel(month).slice(5)}月</text>;
+              })}
+              {trendSeries.map(({ shop, segments }) => <g key={shop.key}>
+                {segments.map((segment, index) => <path className={`industry-chart-line ${shop.key === "G2G" ? "dashed" : ""}`} stroke={shop.color} d={segment.map((point, pointIndex) => `${pointIndex === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ")} key={`${shop.key}-${index}`} />)}
+                {segments.flat().map((point) => <g key={`${shop.key}-${point.month}`}>
+                  {shop.marker === "circle"
+                    ? <circle className="industry-chart-point" cx={point.x} cy={point.y} r="5" stroke={shop.color} tabIndex={0} aria-label={`${shop.name}，${monthLabel(point.month)}，排名第 ${point.row?.rank}`}>
+                      <title>{`${shop.name} · ${monthLabel(point.month)} · #${point.row?.rank}`}</title>
+                    </circle>
+                    : <rect className="industry-chart-point" x={point.x - 5} y={point.y - 5} width="10" height="10" stroke={shop.color} tabIndex={0} aria-label={`${shop.name}，${monthLabel(point.month)}，排名第 ${point.row?.rank}`}>
+                      <title>{`${shop.name} · ${monthLabel(point.month)} · #${point.row?.rank}`}</title>
+                    </rect>}
+                </g>)}
+              </g>)}
+            </svg>
+          </div>
+          {availableRankCount === 0 && <div className="industry-empty-note">所选指标下，关注店铺没有可绘制的排名记录。</div>}
+          <p className="industry-chart-note">未出现在某月源文件中的店铺不推断排名。</p>
+        </section>
+        </div>
 
         <section className="industry-section-card">
           <div className="industry-section-heading"><div><h3>{monthLabel(selectedMonth)} 当月排名</h3><p>包含源表前十名及其后按排序顺序编号的店铺；空白指标值不补零。</p></div><span>{currentRankedRows.length} 家</span></div>

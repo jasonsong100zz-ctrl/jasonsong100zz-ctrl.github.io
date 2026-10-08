@@ -470,6 +470,11 @@ footer { display: flex; justify-content: space-between; gap: 15px; margin-top: 2
 .industry-chart-note, .industry-source-note { margin: 8px 2px 0; color: #8999ae; font-size: 9px; line-height: 1.6; }
 .industry-empty-note { padding: 16px; border-radius: 8px; background: #f7f9fc; color: #7f90a8; font-size: 10px; text-align: center; }
 .industry-insight-grid { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, .95fr); gap: 12px; }
+.industry-insight-column { display: grid; align-content: start; gap: 12px; min-width: 0; }
+.industry-trend-card .industry-section-heading { margin-bottom: 8px; }
+.industry-trend-card .industry-chart-legend { gap: 10px; font-size: 9px; }
+.industry-trend-card .industry-chart-legend b { flex-basis: 100%; margin: 0; }
+.industry-trend-card .industry-rank-chart { min-width: 620px; }
 .industry-table-wrap, .industry-matrix-wrap { overflow: auto; border: 1px solid #e8edf4; border-radius: 8px; }
 .industry-table { width: 100%; border-collapse: collapse; color: #344965; font-size: 10px; text-align: left; }
 .industry-table th { padding: 8px 9px; background: #f4f7fb; color: #71849f; font-size: 9px; font-weight: 700; white-space: nowrap; }
@@ -522,6 +527,7 @@ footer { display: flex; justify-content: space-between; gap: 15px; margin-top: 2
   .industry-section-heading { gap: 8px; }
   .industry-section-heading h3 { font-size: 12px; }
   .industry-rank-chart { min-width: 600px; }
+  .industry-trend-card .industry-rank-chart { min-width: 600px; }
   .industry-matrix-table { min-width: 840px; }
 }
 
