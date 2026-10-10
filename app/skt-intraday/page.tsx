@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { type Dispatch, type SetStateAction, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 
 const SHEET_ID = "1yuJxg2PFQgAiOjnnCZVutQm-4I1q376c8eXZOjWQLN8";
@@ -24,12 +24,14 @@ type AdLinkMetricValues = Record<AdLinkMetricKey, number>;
 
 type TimeRecord = { date: string; hour: number; sales: number; units: number; orders: number; visitors: number; search: number; cart: number; products: number };
 type LinkRecord = { date: string; name: string; id: string; category: string; metrics: LinkMetricValues };
-type AdRecord = { date: string; id: string; product: boolean; sales: number; spend: number; exposure: number; clicks: number };
+type AdRecord = { date: string; id: string; category: string; product: boolean; sales: number; spend: number; exposure: number; clicks: number };
 type LinkSummary = { key: string; name: string; id: string; current: LinkMetricValues; previousFull: LinkMetricValues; previousComparable: LinkMetricValues };
 type CategorySummary = { category: string; current: LinkMetricValues; previousFull: LinkMetricValues; previousComparable: LinkMetricValues };
 type AdLinkBase = { sales: number; spend: number; exposure: number; clicks: number; linkSales: number };
 type AdLinkSummary = { key: string; name: string; id: string; current: AdLinkBase & AdLinkMetricValues; previousComparable: AdLinkBase & AdLinkMetricValues };
 type DashboardData = { timeRows: TimeRecord[]; linkRows: LinkRecord[]; adsRows: AdRecord[] };
+type ComparisonSortKey = "current" | "previous" | "delta" | "rate" | "share";
+type ComparisonSort = { key: ComparisonSortKey; direction: "asc" | "desc" };
 
 const SALES_NAMES = ["銷售額(全部訂單) (TWD)", "销售额(全部订单) (TWD)", "销售額(全部訂單) (TWD)"];
 const UNITS_NAMES = ["數量(全部訂單)", "数量(全部订单)"];
@@ -183,6 +185,34 @@ function changeRate(current: number, previous: number) {
   return previous ? current / previous - 1 : null;
 }
 
+function sortComparisonRows<T>(rows: T[], sort: ComparisonSort, getValues: (row: T) => { current: number; previous: number; share?: number }) {
+  const valueFor = (row: T) => {
+    const values = getValues(row);
+    if (sort.key === "current") return values.current;
+    if (sort.key === "previous") return values.previous;
+    if (sort.key === "delta") return values.current - values.previous;
+    if (sort.key === "rate") return changeRate(values.current, values.previous);
+    return values.share ?? null;
+  };
+  return [...rows].sort((left, right) => {
+    const leftValue = valueFor(left);
+    const rightValue = valueFor(right);
+    if (leftValue === null && rightValue === null) return 0;
+    if (leftValue === null) return 1;
+    if (rightValue === null) return -1;
+    return (leftValue - rightValue) * (sort.direction === "asc" ? 1 : -1);
+  });
+}
+
+function toggleSort(setSort: Dispatch<SetStateAction<ComparisonSort>>, key: ComparisonSortKey) {
+  setSort((current) => current.key === key ? { key, direction: current.direction === "asc" ? "desc" : "asc" } : { key, direction: "desc" });
+}
+
+function SortButton({ label, sortKey, sort, onSort }: { label: string; sortKey: ComparisonSortKey; sort: ComparisonSort; onSort: () => void }) {
+  const active = sort.key === sortKey;
+  return <button type="button" className={`sort-button${active ? " active" : ""}`} onClick={onSort}><span>{label}</span><i>{active ? (sort.direction === "asc" ? "↑" : "↓") : "↕"}</i></button>;
+}
+
 async function loadCsv(gid: number, cacheBust: number) {
   const response = await fetch(`https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=${gid}&t=${cacheBust}`, { cache: "no-store" });
   if (!response.ok) throw new Error(`Google Sheet ${response.status}`);
@@ -236,6 +266,7 @@ async function loadDashboardData(brand: Brand): Promise<DashboardData> {
     return {
       date: normalizeDate(firstValue(record, ["日期"]), referenceDate),
       id,
+      category: categoryById.get(normalizeId(id)) || FALLBACK_CATEGORY,
       product: Boolean(id && id !== "-"),
       sales: numberValue(firstValue(record, ["直接銷售金額", "直接销售金额"])),
       spend: numberValue(firstValue(record, ["花費", "花费", "廣告花費", "广告花费"])),
@@ -258,8 +289,8 @@ function sumLinks(rows: LinkRecord[], date: string, field: LinkMetricKey) {
   return rows.filter((row) => row.date === date).reduce((sum, row) => sum + row.metrics[field], 0);
 }
 
-function sumAds(rows: AdRecord[], date: string, field: AdMetricKey, productOnly = false) {
-  return rows.filter((row) => row.date === date && (!productOnly || row.product)).reduce((sum, row) => sum + row[field], 0);
+function sumAds(rows: AdRecord[], date: string, field: AdMetricKey, productOnly = false, excludeGroupPurchase = false) {
+  return rows.filter((row) => row.date === date && (!productOnly || row.product) && (!excludeGroupPurchase || !isGroupPurchase(row.category))).reduce((sum, row) => sum + row[field], 0);
 }
 
 function emptyAdLinkBase(): AdLinkBase {
@@ -392,6 +423,9 @@ export default function SktIntradayPage() {
   const [metric, setMetric] = useState<LinkMetricKey>("sales");
   const [categoryMetric, setCategoryMetric] = useState<LinkMetricKey>("sales");
   const [adMetric, setAdMetric] = useState<AdLinkMetricKey>("salesShare");
+  const [linkSort, setLinkSort] = useState<ComparisonSort>({ key: "current", direction: "desc" });
+  const [categorySort, setCategorySort] = useState<ComparisonSort>({ key: "current", direction: "desc" });
+  const [adLinkSort, setAdLinkSort] = useState<ComparisonSort>({ key: "current", direction: "desc" });
   const [search, setSearch] = useState("");
   const [adSearch, setAdSearch] = useState("");
 
@@ -460,15 +494,25 @@ export default function SktIntradayPage() {
     };
   }, [currentDate, previousDate, cutoff, data]);
 
+  const nonGroupSales = useMemo(() => {
+    const rows = data.linkRows.filter((row) => !isGroupPurchase(row.category));
+    return { current: sumLinks(rows, currentDate, "sales"), previousFull: sumLinks(rows, previousDate, "sales") };
+  }, [data.linkRows, currentDate, previousDate]);
+  const currentNonGroupLinkSales = nonGroupSales.current;
+  const previousNonGroupLinkSales = nonGroupSales.previousFull;
   const adMetrics = useMemo(() => {
     if (!storeMetrics || !currentDate || !previousDate) return null;
     const ratio = (numerator: number, denominator: number) => denominator ? numerator / denominator : 0;
     const currentSales = sumAds(data.adsRows, currentDate, "sales", true);
+    const currentNonGroupSales = sumAds(data.adsRows, currentDate, "sales", true, true);
     const currentSpend = sumAds(data.adsRows, currentDate, "spend");
+    const currentNonGroupSpend = sumAds(data.adsRows, currentDate, "spend", false, true);
     const currentExposure = sumAds(data.adsRows, currentDate, "exposure");
     const currentClicks = sumAds(data.adsRows, currentDate, "clicks");
     const previousSales = sumAds(data.adsRows, previousDate, "sales", true) * storeMetrics.salesCoefficient;
+    const previousNonGroupSales = sumAds(data.adsRows, previousDate, "sales", true, true) * storeMetrics.salesCoefficient;
     const previousSpend = sumAds(data.adsRows, previousDate, "spend") * storeMetrics.salesCoefficient;
+    const previousNonGroupSpend = sumAds(data.adsRows, previousDate, "spend", false, true) * storeMetrics.salesCoefficient;
     const previousExposure = sumAds(data.adsRows, previousDate, "exposure") * storeMetrics.salesCoefficient;
     const previousClicks = sumAds(data.adsRows, previousDate, "clicks") * storeMetrics.salesCoefficient;
     const currentLinkSales = sumLinks(data.linkRows, currentDate, "sales");
@@ -482,31 +526,34 @@ export default function SktIntradayPage() {
       previousSpend,
       currentSalesShare: ratio(currentSales, currentLinkSales),
       previousSalesShare: ratio(previousSales, previousLinkSales),
+      currentNonGroupSalesShare: ratio(currentNonGroupSales, currentNonGroupLinkSales),
+      previousNonGroupSalesShare: ratio(previousNonGroupSales, previousNonGroupLinkSales * storeMetrics.salesCoefficient),
       currentSpendRate: ratio(currentSpend, currentStoreSales),
       previousSpendRate: ratio(previousSpend, previousStoreSales),
+      currentNonGroupSpendRate: ratio(currentNonGroupSpend, currentNonGroupLinkSales),
+      previousNonGroupSpendRate: ratio(previousNonGroupSpend, previousNonGroupLinkSales * storeMetrics.salesCoefficient),
       currentCpc: ratio(currentSpend, currentClicks),
       previousCpc: ratio(previousSpend, previousClicks),
       currentCpm: ratio(currentSpend, currentExposure) * 1000,
       previousCpm: ratio(previousSpend, previousExposure) * 1000,
       linkRows: buildAdLinkSummary(data.adsRows, data.linkRows, currentDate, previousDate, storeMetrics.salesCoefficient, adMetric),
     };
-  }, [currentDate, previousDate, data, storeMetrics, adMetric]);
+  }, [currentDate, previousDate, data, storeMetrics, adMetric, currentNonGroupLinkSales, previousNonGroupLinkSales]);
 
   const linkRows = useMemo(() => {
     if (!storeMetrics || !currentDate || !previousDate) return [];
     const rows = buildLinkSummary(data.linkRows, currentDate, previousDate, storeMetrics.linkCoefficients, metric);
     const normalizedSearch = search.trim().toLowerCase();
-    return rows.filter((row) => !normalizedSearch || `${row.name} ${row.id}`.toLowerCase().includes(normalizedSearch));
-  }, [currentDate, previousDate, data, metric, search, storeMetrics]);
+    const filtered = rows.filter((row) => !normalizedSearch || `${row.name} ${row.id}`.toLowerCase().includes(normalizedSearch));
+    return sortComparisonRows(filtered, linkSort, (row) => ({ current: row.current[metric], previous: row.previousComparable[metric] }));
+  }, [currentDate, previousDate, data, metric, search, storeMetrics, linkSort]);
 
   const categoryRows = useMemo(() => {
     if (!storeMetrics || !currentDate || !previousDate) return [];
-    return buildCategorySummary(data.linkRows, currentDate, previousDate, storeMetrics.linkCoefficients, categoryMetric);
-  }, [currentDate, previousDate, data.linkRows, storeMetrics, categoryMetric]);
-  const nonGroupSales = useMemo(() => {
-    const rows = data.linkRows.filter((row) => !isGroupPurchase(row.category));
-    return { current: sumLinks(rows, currentDate, "sales"), previousFull: sumLinks(rows, previousDate, "sales") };
-  }, [data.linkRows, currentDate, previousDate]);
+    const rows = buildCategorySummary(data.linkRows, currentDate, previousDate, storeMetrics.linkCoefficients, categoryMetric);
+    const total = rows.reduce((sum, row) => sum + row.current[categoryMetric], 0);
+    return sortComparisonRows(rows, categorySort, (row) => ({ current: row.current[categoryMetric], previous: row.previousComparable[categoryMetric], share: total ? row.current[categoryMetric] / total : 0 }));
+  }, [currentDate, previousDate, data.linkRows, storeMetrics, categoryMetric, categorySort]);
   const hasHistoricalCoefficient = sumTime(data.timeRows, previousDate, null, "sales") > 0;
   const hasPreviousLinkData = data.linkRows.some((row) => row.date === previousDate);
   const hasCategoryComparison = hasHistoricalCoefficient && hasPreviousLinkData;
@@ -518,8 +565,9 @@ export default function SktIntradayPage() {
   const adLinkRows = useMemo(() => {
     if (!adMetrics) return [];
     const normalizedSearch = adSearch.trim().toLowerCase();
-    return adMetrics.linkRows.filter((row) => !normalizedSearch || `${row.name} ${row.id}`.toLowerCase().includes(normalizedSearch));
-  }, [adMetrics, adSearch]);
+    const filtered = adMetrics.linkRows.filter((row) => !normalizedSearch || `${row.name} ${row.id}`.toLowerCase().includes(normalizedSearch));
+    return sortComparisonRows(filtered, adLinkSort, (row) => ({ current: row.current[adMetric], previous: row.previousComparable[adMetric] }));
+  }, [adMetrics, adSearch, adMetric, adLinkSort]);
   const refresh = () => {
     setError("");
     setRefreshing(true);
@@ -544,13 +592,13 @@ export default function SktIntradayPage() {
     <section className="intraday-controls"><label>当前日期<select value={currentDate} onChange={(event) => { setCurrentDate(event.target.value); setPreviousDate(previousMonthDate(event.target.value)); }}>{availableDates.map((date) => <option value={date} key={date}>{date}</option>)}</select></label><label>对比日期<select value={previousDate} onChange={(event) => setPreviousDate(event.target.value)}>{previousDates.map((date) => <option value={date} key={date}>{date}</option>)}</select></label><label>截止时间<select value={cutoff} onChange={(event) => setCutoff(Number(event.target.value))}>{Array.from({ length: 24 }, (_, hour) => <option value={hour} key={hour}>包含 {String(hour).padStart(2, "0")}:00 小时</option>)}</select></label><div className="intraday-rule"><b>当前口径</b><span>{formatDate(currentDate)} 00:00～{String(cutoff).padStart(2, "0")}:59</span></div></section>
     <div className="intraday-notice"><strong>上期数据按历史系数估算</strong><span>系数来自 {formatDate(previousDate)} 店铺分时段销售数据；当前默认包含 08:00 小时。</span></div>
     <section className="intraday-cards"><MetricCard label="全店销售额" current={storeMetrics.currentSales} previous={storeMetrics.previousSales} money /><MetricCard label="全店商品数量" current={storeMetrics.currentUnits} previous={storeMetrics.previousUnits} /><MetricCard label="全店买家数" current={storeMetrics.currentOrders} previous={storeMetrics.previousOrders} /><MetricCard label="全店访客数" current={storeMetrics.currentVisitors} previous={storeMetrics.previousVisitors} /><MetricCard label="全店加购件数" current={storeMetrics.currentCart} previous={storeMetrics.previousCart} /><MetricCard label="商品链接销售额" current={sumLinks(data.linkRows, currentDate, "sales")} previous={sumLinks(data.linkRows, previousDate, "sales") * storeMetrics.linkCoefficients.sales} money /><MetricCard label="商品链接销售额（剔除团购）" current={nonGroupSales.current} previous={hasCategoryComparison ? nonGroupSales.previousFull * storeMetrics.salesCoefficient : null} money note={hasCategoryComparison ? "仅剔除匹配表中归为团购的链接；上期按历史系数估算" : "对比日缺少分时或链接数据，环比暂不可用"} /></section>
-    <section className="intraday-panel intraday-category-panel"><div className="intraday-panel-heading"><div><h2>品类分时段对比</h2><p>按商品 ID 匹配源表品类；当前为链接实际数据，上期全天值按对应指标的分时系数折算。未匹配的链接归入“其他/赠品”。</p></div><span>{categoryRows.length} 个品类</span></div>{!hasCategoryComparison && <div className="intraday-category-warning">{formatDate(previousDate)} 缺少全店分时段或商品链接数据，上期估算和环比暂不展示。</div>}<div className="intraday-table-actions"><div className="intraday-segment">{LINK_METRICS.map((item) => <button type="button" className={categoryMetric === item.key ? "active" : ""} onClick={() => setCategoryMetric(item.key)} key={item.key}>{item.label}</button>)}</div></div><div className="intraday-table-wrap"><table><thead><tr><th>品类</th><th>{formatDate(currentDate)} 当前 · {activeCategoryMetric.label}</th><th>{formatDate(previousDate)} 上期可比</th><th>差额</th><th>差异率</th><th>当前占比</th></tr></thead><tbody>{categoryRows.map((row) => { const current = row.current[categoryMetric]; const previous = hasCategoryComparison ? row.previousComparable[categoryMetric] : null; return <tr key={row.category}><td><b>{row.category}</b></td><td>{formatLinkMetric(categoryMetric, current)}</td><td>{previous === null ? "—" : formatLinkMetric(categoryMetric, previous)}</td><td className={previous !== null && current - previous >= 0 ? "positive-text" : "negative-text"}>{previous === null ? "—" : formatLinkMetric(categoryMetric, current - previous)}</td><td className={previous !== null && current >= previous ? "positive-text" : "negative-text"}>{previous === null ? "—" : formatPercent(changeRate(current, previous))}</td><td>{categoryTotal ? formatRatio(current / categoryTotal) : "—"}</td></tr>; })}</tbody></table></div></section>
+    <section className="intraday-panel intraday-category-panel"><div className="intraday-panel-heading"><div><h2>品类分时段对比</h2><p>按商品 ID 匹配源表品类；当前为链接实际数据，上期全天值按对应指标的分时系数折算。未匹配的链接归入“其他/赠品”。</p></div><span>{categoryRows.length} 个品类</span></div>{!hasCategoryComparison && <div className="intraday-category-warning">{formatDate(previousDate)} 缺少全店分时段或商品链接数据，上期估算和环比暂不展示。</div>}<div className="intraday-table-actions"><div className="intraday-segment">{LINK_METRICS.map((item) => <button type="button" className={categoryMetric === item.key ? "active" : ""} onClick={() => setCategoryMetric(item.key)} key={item.key}>{item.label}</button>)}</div></div><div className="intraday-table-wrap"><table><thead><tr><th>品类</th><th><SortButton label={`${formatDate(currentDate)} 当前 · ${activeCategoryMetric.label}`} sortKey="current" sort={categorySort} onSort={() => toggleSort(setCategorySort, "current")} /></th><th><SortButton label={`${formatDate(previousDate)} 上期可比`} sortKey="previous" sort={categorySort} onSort={() => toggleSort(setCategorySort, "previous")} /></th><th><SortButton label="差额" sortKey="delta" sort={categorySort} onSort={() => toggleSort(setCategorySort, "delta")} /></th><th><SortButton label="差异率" sortKey="rate" sort={categorySort} onSort={() => toggleSort(setCategorySort, "rate")} /></th><th><SortButton label="当前占比" sortKey="share" sort={categorySort} onSort={() => toggleSort(setCategorySort, "share")} /></th></tr></thead><tbody>{categoryRows.map((row) => { const current = row.current[categoryMetric]; const previous = hasCategoryComparison ? row.previousComparable[categoryMetric] : null; return <tr key={row.category}><td><b>{row.category}</b></td><td>{formatLinkMetric(categoryMetric, current)}</td><td>{previous === null ? "—" : formatLinkMetric(categoryMetric, previous)}</td><td className={previous !== null && current - previous >= 0 ? "positive-text" : "negative-text"}>{previous === null ? "—" : formatLinkMetric(categoryMetric, current - previous)}</td><td className={previous !== null && current >= previous ? "positive-text" : "negative-text"}>{previous === null ? "—" : formatPercent(changeRate(current, previous))}</td><td>{categoryTotal ? formatRatio(current / categoryTotal) : "—"}</td></tr>; })}</tbody></table></div></section>
     {adMetrics && <>
-      <section className="intraday-panel intraday-ads-panel"><div className="intraday-panel-heading"><div><h2>站内广告实时环比</h2><p>总览 CPC = 全站广告花费 ÷ 全站点击；当前总览包含无商品 ID 的店铺广告行。CPM 使用源表“瀏覽數”，不是标准曝光 CPM。</p></div><span>{BRANDS[brand].adsSheet}</span></div><div className="intraday-ads-grid"><MetricCard label="广告直接销售额（产品）" current={adMetrics.currentSales} previous={adMetrics.previousSales} money /><MetricCard label="广告销售占比" current={adMetrics.currentSalesShare} previous={adMetrics.previousSalesShare} formatter={formatRatio} note="产品广告直接销售额 ÷ 商品链接销售额" /><MetricCard label="站内花费" current={adMetrics.currentSpend} previous={adMetrics.previousSpend} money note="含店铺广告行；上期按销售额系数估算" /><MetricCard label="站内花费费率" current={adMetrics.currentSpendRate} previous={adMetrics.previousSpendRate} formatter={formatRatio} note="花费 ÷ 全店销售额" /><MetricCard label="CPC" current={adMetrics.currentCpc} previous={adMetrics.previousCpc} formatter={formatUnitCost} note="全站花费 ÷ 全站点击；上期按系数估算" /><MetricCard label="CPM（按浏览数）" current={adMetrics.currentCpm} previous={adMetrics.previousCpm} formatter={formatUnitCost} note="全站花费 ÷ 浏览数 × 1,000" /></div></section>
-      <section className="intraday-panel intraday-ad-link-panel"><div className="intraday-panel-heading"><div><h2>广告链接维度实时环比</h2><p>只统计有商品 ID 的产品广告行；按商品 ID 汇总，链接销售占比 = 该链接广告直接销售额 ÷ 该链接销售额。</p></div><span>{adLinkRows.length} 条链接</span></div><div className="intraday-table-actions"><input value={adSearch} onChange={(event) => setAdSearch(event.target.value)} placeholder="搜索广告链接简称或商品 ID" /><div className="intraday-segment">{AD_LINK_METRICS.map((item) => <button type="button" className={adMetric === item.key ? "active" : ""} onClick={() => setAdMetric(item.key)} key={item.key}>{item.label}</button>)}</div></div><div className="intraday-table-wrap"><table><thead><tr><th>链接简称</th><th>{formatDate(currentDate)} 当前 · {activeAdMetric.label}</th><th>{formatDate(previousDate)} 上期可比</th><th>差异率</th><th>当前投放明细</th><th>口径</th></tr></thead><tbody>{adLinkRows.slice(0, 100).map((row) => { const current = row.current[adMetric]; const previous = row.previousComparable[adMetric]; const delta = changeRate(current, previous); return <tr key={row.key}><td><b>{row.name}</b><small>{row.id}</small></td><td>{formatAdLinkMetric(adMetric, current)}</td><td>{formatAdLinkMetric(adMetric, previous)}</td><td className={delta !== null && delta >= 0 ? "positive-text" : "negative-text"}>{formatPercent(delta)}</td><td><small>花费 {formatMoney(row.current.spend)} · 点击 {formatNumber(row.current.clicks)} · 浏览 {formatNumber(row.current.exposure)}</small></td><td><em>上期按销售额系数估算</em></td></tr>; })}</tbody></table></div></section>
+    <section className="intraday-panel intraday-ads-panel"><div className="intraday-panel-heading"><div><h2>站内广告实时环比</h2><p>总览 CPC = 全站广告花费 ÷ 全站点击；当前总览包含无商品 ID 的店铺广告行。CPM 使用源表“瀏覽數”，不是标准曝光 CPM。</p></div><span>{BRANDS[brand].adsSheet}</span></div><div className="intraday-ads-grid"><MetricCard label="广告直接销售额（产品）" current={adMetrics.currentSales} previous={adMetrics.previousSales} money /><MetricCard label="广告销售占比" current={adMetrics.currentSalesShare} previous={adMetrics.previousSalesShare} formatter={formatRatio} note="产品广告直接销售额 ÷ 商品链接销售额" /><MetricCard label="广告销售占比（剔除团购）" current={adMetrics.currentNonGroupSalesShare} previous={adMetrics.previousNonGroupSalesShare} formatter={formatRatio} note="非团购产品广告直接销售额 ÷ 非团购商品链接销售额" /><MetricCard label="站内花费" current={adMetrics.currentSpend} previous={adMetrics.previousSpend} money note="含店铺广告行；上期按销售额系数估算" /><MetricCard label="站内花费费率" current={adMetrics.currentSpendRate} previous={adMetrics.previousSpendRate} formatter={formatRatio} note="花费 ÷ 全店销售额" /><MetricCard label="站内花费费率（剔除团购）" current={adMetrics.currentNonGroupSpendRate} previous={adMetrics.previousNonGroupSpendRate} formatter={formatRatio} note="非团购广告花费 ÷ 非团购商品链接销售额" /><MetricCard label="CPC" current={adMetrics.currentCpc} previous={adMetrics.previousCpc} formatter={formatUnitCost} note="全站花费 ÷ 全站点击；上期按系数估算" /><MetricCard label="CPM（按浏览数）" current={adMetrics.currentCpm} previous={adMetrics.previousCpm} formatter={formatUnitCost} note="全站花费 ÷ 浏览数 × 1,000" /></div></section>
+      <section className="intraday-panel intraday-ad-link-panel"><div className="intraday-panel-heading"><div><h2>广告链接维度实时环比</h2><p>只统计有商品 ID 的产品广告行；按商品 ID 汇总，链接销售占比 = 该链接广告直接销售额 ÷ 该链接销售额。</p></div><span>{adLinkRows.length} 条链接</span></div><div className="intraday-table-actions"><input value={adSearch} onChange={(event) => setAdSearch(event.target.value)} placeholder="搜索广告链接简称或商品 ID" /><div className="intraday-segment">{AD_LINK_METRICS.map((item) => <button type="button" className={adMetric === item.key ? "active" : ""} onClick={() => setAdMetric(item.key)} key={item.key}>{item.label}</button>)}</div></div><div className="intraday-table-wrap"><table><thead><tr><th>链接简称</th><th><SortButton label={`${formatDate(currentDate)} 当前 · ${activeAdMetric.label}`} sortKey="current" sort={adLinkSort} onSort={() => toggleSort(setAdLinkSort, "current")} /></th><th><SortButton label={`${formatDate(previousDate)} 上期可比`} sortKey="previous" sort={adLinkSort} onSort={() => toggleSort(setAdLinkSort, "previous")} /></th><th><SortButton label="差异率" sortKey="rate" sort={adLinkSort} onSort={() => toggleSort(setAdLinkSort, "rate")} /></th><th>当前投放明细</th><th>口径</th></tr></thead><tbody>{adLinkRows.slice(0, 100).map((row) => { const current = row.current[adMetric]; const previous = row.previousComparable[adMetric]; const delta = changeRate(current, previous); return <tr key={row.key}><td><b>{row.name}</b><small>{row.id}</small></td><td>{formatAdLinkMetric(adMetric, current)}</td><td>{formatAdLinkMetric(adMetric, previous)}</td><td className={delta !== null && delta >= 0 ? "positive-text" : "negative-text"}>{formatPercent(delta)}</td><td><small>花费 {formatMoney(row.current.spend)} · 点击 {formatNumber(row.current.clicks)} · 浏览 {formatNumber(row.current.exposure)}</small></td><td><em>上期按销售额系数估算</em></td></tr>; })}</tbody></table></div></section>
     </>}
     <div className="intraday-grid"><HourlyTable rows={data.timeRows} currentDate={currentDate} previousDate={previousDate} cutoff={cutoff} /><section className="intraday-panel intraday-formula"><div className="intraday-panel-heading"><div><h2>本次折算参数</h2><p>用于商品链接每日数据的上期还原</p></div><span>估算</span></div><div className="intraday-formula-row"><span>销售额累计系数</span><strong>{(storeMetrics.salesCoefficient * 100).toFixed(2)}%</strong></div><div className="intraday-formula-row"><span>商品数量累计系数</span><strong>{(storeMetrics.unitsCoefficient * 100).toFixed(2)}%</strong></div><div className="intraday-formula-row"><span>访客累计系数</span><strong>{(storeMetrics.visitorsCoefficient * 100).toFixed(2)}%</strong></div><div className="intraday-formula-row"><span>搜索点击累计系数</span><strong>{(storeMetrics.searchCoefficient * 100).toFixed(2)}%</strong></div><div className="intraday-formula-row"><span>加购累计系数</span><strong>{(storeMetrics.cartCoefficient * 100).toFixed(2)}%</strong></div><div className="intraday-formula-row"><span>买家数累计系数</span><strong>{(storeMetrics.buyersCoefficient * 100).toFixed(2)}%</strong></div><p className="intraday-formula-note">上期可比值 = 上期全天值 × 对应指标累计系数。每个链接指标分别使用对应的全店分时段系数。</p></section></div>
-    <section className="intraday-panel intraday-link-panel"><div className="intraday-panel-heading"><div><h2>商品链接分时段对比</h2><p>当前为实际累计数据；上期为全天链接数据按对应 {brand} 系数折算。</p></div><span>{linkRows.length} 条链接</span></div><div className="intraday-table-actions"><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索链接简称或商品 ID" /><div className="intraday-segment">{LINK_METRICS.map((item) => <button type="button" className={metric === item.key ? "active" : ""} onClick={() => setMetric(item.key)} key={item.key}>{item.label}</button>)}</div></div><div className="intraday-table-wrap"><table><thead><tr><th>链接简称</th><th>{formatDate(currentDate)} 当前 · {activeMetric.label}</th><th>{formatDate(previousDate)} 上期可比</th><th>差额</th><th>差异率</th><th>口径</th></tr></thead><tbody>{linkRows.slice(0, 100).map((row) => { const current = row.current[metric]; const previous = row.previousComparable[metric]; const delta = changeRate(current, previous); return <tr key={row.key}><td><b>{row.name}</b><small>{row.id || "未填写商品 ID"}</small></td><td>{formatLinkMetric(metric, current)}</td><td>{formatLinkMetric(metric, previous)}</td><td className={current - previous >= 0 ? "positive-text" : "negative-text"}>{formatLinkMetric(metric, current - previous)}</td><td className={delta !== null && delta >= 0 ? "positive-text" : "negative-text"}>{formatPercent(delta)}</td><td><em>按历史系数估算</em></td></tr>; })}</tbody></table></div></section>
+    <section className="intraday-panel intraday-link-panel"><div className="intraday-panel-heading"><div><h2>商品链接分时段对比</h2><p>当前为实际累计数据；上期为全天链接数据按对应 {brand} 系数折算。</p></div><span>{linkRows.length} 条链接</span></div><div className="intraday-table-actions"><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索链接简称或商品 ID" /><div className="intraday-segment">{LINK_METRICS.map((item) => <button type="button" className={metric === item.key ? "active" : ""} onClick={() => setMetric(item.key)} key={item.key}>{item.label}</button>)}</div></div><div className="intraday-table-wrap"><table><thead><tr><th>链接简称</th><th><SortButton label={`${formatDate(currentDate)} 当前 · ${activeMetric.label}`} sortKey="current" sort={linkSort} onSort={() => toggleSort(setLinkSort, "current")} /></th><th><SortButton label={`${formatDate(previousDate)} 上期可比`} sortKey="previous" sort={linkSort} onSort={() => toggleSort(setLinkSort, "previous")} /></th><th><SortButton label="差额" sortKey="delta" sort={linkSort} onSort={() => toggleSort(setLinkSort, "delta")} /></th><th><SortButton label="差异率" sortKey="rate" sort={linkSort} onSort={() => toggleSort(setLinkSort, "rate")} /></th><th>口径</th></tr></thead><tbody>{linkRows.slice(0, 100).map((row) => { const current = row.current[metric]; const previous = row.previousComparable[metric]; const delta = changeRate(current, previous); return <tr key={row.key}><td><b>{row.name}</b><small>{row.id || "未填写商品 ID"}</small></td><td>{formatLinkMetric(metric, current)}</td><td>{formatLinkMetric(metric, previous)}</td><td className={current - previous >= 0 ? "positive-text" : "negative-text"}>{formatLinkMetric(metric, current - previous)}</td><td className={delta !== null && delta >= 0 ? "positive-text" : "negative-text"}>{formatPercent(delta)}</td><td><em>按历史系数估算</em></td></tr>; })}</tbody></table></div></section>
     <footer className="intraday-footer"><span>数据源：{BRANDS[brand].timeSheet} + {BRANDS[brand].linkSheet} + {BRANDS[brand].adsSheet}</span><span>独立试用版 · 原全天看板未修改</span></footer>
   </main>;
 }
