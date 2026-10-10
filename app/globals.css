@@ -565,6 +565,7 @@ footer { display: flex; justify-content: space-between; gap: 15px; margin-top: 2
 .intraday-delta { margin-top: 10px; font-size: 15px; font-weight: 900; }
 .intraday-delta.positive, .positive-text { color: #16835f; }
 .intraday-delta.negative, .negative-text { color: #d05454; }
+.intraday-delta.neutral { color: #7890ad; }
 .intraday-card small { display: block; margin-top: 6px; color: #9aabc0; font-size: 9px; }
 .intraday-grid { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(280px, .85fr); gap: 12px; margin-top: 14px; }
 .intraday-panel { min-width: 0; padding: 16px; border: 1px solid #dbe6f5; border-radius: 14px; background: #fff; box-shadow: 0 8px 22px rgb(66 97 145 / 6%); }
@@ -592,6 +593,9 @@ footer { display: flex; justify-content: space-between; gap: 15px; margin-top: 2
 .intraday-formula-row strong { color: #1f67c7; font-size: 16px; }
 .intraday-formula-note { margin: auto 0 0; padding-top: 18px; color: #8798af; font-size: 10px; line-height: 1.65; }
 .intraday-ads-panel { margin-top: 14px; }
+.intraday-category-panel { margin-top: 14px; }
+.intraday-category-panel .intraday-table-actions { justify-content: flex-start; }
+.intraday-category-warning { margin-bottom: 11px; color: #9c6d12; font-size: 11px; }
 .intraday-ads-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 11px; }
 .intraday-ad-link-panel { margin-top: 14px; }
 .intraday-ad-link-panel .intraday-table-wrap table { min-width: 960px; }
