@@ -4,10 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 
 const SHEET_ID = "1yuJxg2PFQgAiOjnnCZVutQm-4I1q376c8eXZOjWQLN8";
-const TIME_GID = 225938746;
-const LINK_GID = 1109512359;
-const ADS_GID = 1227209277;
-const ADS_COLUMNS = { date: 1, id: 8, exposure: 16, clicks: 17, gmv: 27, spend: 29 } as const;
+const BRANDS = {
+  SKT: { timeGid: 225938746, linkGid: 1109512359, adsGid: 1227209277, timeSheet: "SKT-店铺分时段销售数据", linkSheet: "SKT-店铺链接维度每日", adsSheet: "SKT-站内广告每日" },
+  G2G: { timeGid: 1166314866, linkGid: 870428229, adsGid: 1775304605, timeSheet: "TP&G2G-店铺分时段销售数据", linkSheet: "G2G-店鋪鏈接維度每日", adsSheet: "G2G-站内廣告每日" },
+  TP: { timeGid: 1166314866, linkGid: 22105621, adsGid: 1379096797, timeSheet: "TP&G2G-店铺分时段销售数据", linkSheet: "TP-店鋪鏈接維度每日", adsSheet: "TP-站内廣告每日" },
+} as const;
+type Brand = keyof typeof BRANDS;
 
 type CsvRecord = Record<string, string>;
 type MetricKey = "sales" | "units" | "orders" | "visitors" | "search" | "cart";
@@ -104,10 +106,15 @@ function valueOrColumn(record: CsvRecord, names: string[], columnIndex: number) 
   return firstValue(record, names) || record[`__column_${columnIndex}`] || "";
 }
 
-function normalizeDate(value: string) {
+function normalizeDate(value: string, referenceDate = "") {
   const match = value.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
-  if (!match) return "";
-  return `${match[1]}-${match[2].padStart(2, "0")}-${match[3].padStart(2, "0")}`;
+  if (match) return `${match[1]}-${match[2].padStart(2, "0")}-${match[3].padStart(2, "0")}`;
+  const shortDate = value.match(/^(\d{1,2})月(\d{1,2})日/);
+  if (!shortDate || !referenceDate) return "";
+  const month = shortDate[1].padStart(2, "0");
+  const day = shortDate[2].padStart(2, "0");
+  const year = Number(referenceDate.slice(0, 4)) - (month + day > referenceDate.slice(5) ? 1 : 0);
+  return `${year}-${month}-${day}`;
 }
 
 function hourFromDateTime(value: string) {
@@ -165,9 +172,10 @@ async function loadCsv(gid: number, cacheBust: number) {
   return recordsFromCsv(await response.text());
 }
 
-async function loadDashboardData(): Promise<DashboardData> {
+async function loadDashboardData(brand: Brand): Promise<DashboardData> {
   const cacheBust = Date.now();
-  const [timeSource, linkSource, adsSource] = await Promise.all([loadCsv(TIME_GID, cacheBust), loadCsv(LINK_GID, cacheBust), loadCsv(ADS_GID, cacheBust)]);
+  const config = BRANDS[brand];
+  const [timeSource, linkSource, adsSource] = await Promise.all([loadCsv(config.timeGid, cacheBust), loadCsv(config.linkGid, cacheBust), loadCsv(config.adsGid, cacheBust)]);
   const timeRows = timeSource.map((record) => ({
     date: normalizeDate(record["日期"] || ""),
     hour: hourFromDateTime(record["日期"] || ""),
@@ -176,11 +184,12 @@ async function loadDashboardData(): Promise<DashboardData> {
     orders: numberValue(firstValue(record, ORDERS_NAMES)),
     visitors: numberValue(firstValue(record, VISITOR_NAMES)),
     search: numberValue(firstValue(record, SEARCH_NAMES)),
-    cart: numberValue(valueOrColumn(record, CART_NAMES, 9)),
+    cart: numberValue(valueOrColumn(record, CART_NAMES, brand === "SKT" ? 9 : 10)),
     products: numberValue(firstValue(record, PRODUCT_NAMES)),
-  })).filter((row) => row.date);
+  })).filter((row, index) => row.date && (brand === "SKT" || firstValue(timeSource[index], ["店鋪名稱", "店铺名称"]).trim().toUpperCase() === brand));
+  const referenceDate = timeRows.map((row) => row.date).sort().at(-1) || "";
   const linkRows = linkSource.map((record) => ({
-    date: normalizeDate(record["时间"] || record["時間"] || ""),
+    date: normalizeDate(record["时间"] || record["時間"] || "", referenceDate),
     name: record["链接简称"] || record["鏈接簡稱"] || "未命名链接",
     id: (record["商品ID"] || "").trim(),
     metrics: {
@@ -193,15 +202,15 @@ async function loadDashboardData(): Promise<DashboardData> {
     },
   })).filter((row) => row.date);
   const adsRows = adsSource.map((record) => {
-    const id = (record[`__column_${ADS_COLUMNS.id}`] || firstValue(record, ["商品ID", "商品 ID"])).trim();
+    const id = firstValue(record, ["商品 ID", "商品ID"]).trim();
     return {
-      date: normalizeDate(record[`__column_${ADS_COLUMNS.date}`] || firstValue(record, ["日期", "日期"])),
+      date: normalizeDate(firstValue(record, ["日期"]), referenceDate),
       id,
       product: Boolean(id && id !== "-"),
-      sales: numberValue(record[`__column_${ADS_COLUMNS.gmv}`] || firstValue(record, ["直接銷售金額", "直接销售金额"])),
-      spend: numberValue(record[`__column_${ADS_COLUMNS.spend}`] || firstValue(record, ["花費", "花费", "廣告花費", "广告花费"])),
-      exposure: numberValue(record[`__column_${ADS_COLUMNS.exposure}`] || firstValue(record, ["曝光", "曝光次數", "曝光次数"])),
-      clicks: numberValue(record[`__column_${ADS_COLUMNS.clicks}`] || firstValue(record, ["點擊", "点击", "點擊次數", "点击次数"])),
+      sales: numberValue(firstValue(record, ["直接銷售金額", "直接销售金额"])),
+      spend: numberValue(firstValue(record, ["花費", "花费", "廣告花費", "广告花费"])),
+      exposure: numberValue(firstValue(record, ["瀏覽數", "浏览数"])),
+      clicks: numberValue(firstValue(record, ["點擊數", "点击数"])),
     };
   }).filter((row) => row.date);
   return { timeRows, linkRows, adsRows };
@@ -323,6 +332,7 @@ function HourlyTable({ rows, currentDate, previousDate, cutoff }: { rows: TimeRe
 }
 
 export default function SktIntradayPage() {
+  const [brand, setBrand] = useState<Brand>("SKT");
   const [data, setData] = useState<DashboardData>({ timeRows: [], linkRows: [], adsRows: [] });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -338,20 +348,25 @@ export default function SktIntradayPage() {
   const [adSearch, setAdSearch] = useState("");
 
   useEffect(() => {
-    loadDashboardData().then((result) => {
-      const dates = [...new Set([...result.timeRows.map((row) => row.date), ...result.linkRows.map((row) => row.date), ...result.adsRows.map((row) => row.date)])].sort();
+    let cancelled = false;
+    loadDashboardData(brand).then((result) => {
+      if (cancelled) return;
+      const dates = [...new Set(result.timeRows.map((row) => row.date))].sort();
       const latest = dates[dates.length - 1] || "";
       setData(result);
       setCurrentDate(latest);
       setPreviousDate(previousMonthDate(latest));
       setLastUpdated(new Date());
-    }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "数据读取失败")).finally(() => {
-      setLoading(false);
-      setRefreshing(false);
+    }).catch((reason: unknown) => {
+      if (!cancelled) setError(reason instanceof Error ? reason.message : "数据读取失败");
+    }).finally(() => {
+      if (!cancelled) { setLoading(false); setRefreshing(false); }
     });
-  }, [refreshVersion]);
+    return () => { cancelled = true; };
+  }, [brand, refreshVersion]);
 
-  const availableDates = useMemo(() => [...new Set([...data.timeRows.map((row) => row.date), ...data.linkRows.map((row) => row.date), ...data.adsRows.map((row) => row.date)])].sort().reverse(), [data]);
+  const availableDates = useMemo(() => [...new Set(data.timeRows.map((row) => row.date))].sort().reverse(), [data.timeRows]);
+  const previousDates = useMemo(() => [...new Set([...availableDates, previousDate].filter(Boolean))].sort().reverse(), [availableDates, previousDate]);
   const storeMetrics = useMemo(() => {
     if (!currentDate || !previousDate) return null;
     const previousFullSales = sumTime(data.timeRows, previousDate, null, "sales");
@@ -448,21 +463,31 @@ export default function SktIntradayPage() {
     setRefreshing(true);
     setRefreshVersion((value) => value + 1);
   };
+  const switchBrand = (nextBrand: Brand) => {
+    if (nextBrand === brand) return;
+    setBrand(nextBrand);
+    setLoading(true);
+    setError("");
+    setSearch("");
+    setAdSearch("");
+  };
+  const brandSwitch = <nav className="intraday-brand-switch" aria-label="切换品牌">{(Object.keys(BRANDS) as Brand[]).map((item) => <button key={item} type="button" className={brand === item ? "active" : ""} aria-pressed={brand === item} onClick={() => switchBrand(item)}>{item}</button>)}</nav>;
 
-  if (loading) return <main className="intraday-shell"><div className="intraday-loading">正在读取 SKT 分时段数据…</div></main>;
-  if (error) return <main className="intraday-shell"><div className="intraday-error"><strong>数据读取失败</strong><span>{error}</span><button type="button" onClick={refresh}>重新读取</button></div></main>;
-  if (!storeMetrics) return <main className="intraday-shell"><div className="intraday-error">暂无可用数据</div></main>;
+  if (loading) return <main className="intraday-shell"><div className="intraday-loading">正在读取 {brand} 分时段数据…</div></main>;
+  if (error) return <main className="intraday-shell">{brandSwitch}<div className="intraday-error"><strong>数据读取失败</strong><span>{error}</span><button type="button" onClick={refresh}>重新读取</button></div></main>;
+  if (!storeMetrics || !availableDates.length) return <main className="intraday-shell">{brandSwitch}<div className="intraday-error">{brand} 暂无可用分时段数据<button type="button" onClick={refresh}>重新读取</button></div></main>;
 
-  return <main className="intraday-shell"><header className="intraday-header"><div><p className="intraday-eyebrow">SKT · INTRADAY PILOT</p><h1>分时段销售对比试用版</h1><p className="intraday-subtitle">独立试用页面，不影响原先全天看板。上期商品链接按历史分时段系数折算。</p></div><div className="intraday-header-actions"><Link href="/" className="intraday-back">返回原看板</Link><button type="button" className="intraday-refresh" onClick={refresh} disabled={refreshing}>{refreshing ? "刷新中…" : "刷新数据"}</button>{lastUpdated && <small>更新于 {lastUpdated.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</small>}</div></header>
-    <section className="intraday-controls"><label>当前日期<select value={currentDate} onChange={(event) => { setCurrentDate(event.target.value); setPreviousDate(previousMonthDate(event.target.value)); }}>{availableDates.map((date) => <option value={date} key={date}>{date}</option>)}</select></label><label>对比日期<select value={previousDate} onChange={(event) => setPreviousDate(event.target.value)}>{availableDates.map((date) => <option value={date} key={date}>{date}</option>)}</select></label><label>截止时间<select value={cutoff} onChange={(event) => setCutoff(Number(event.target.value))}>{Array.from({ length: 24 }, (_, hour) => <option value={hour} key={hour}>包含 {String(hour).padStart(2, "0")}:00 小时</option>)}</select></label><div className="intraday-rule"><b>当前口径</b><span>{formatDate(currentDate)} 00:00～{String(cutoff).padStart(2, "0")}:59</span></div></section>
+  return <main className="intraday-shell"><header className="intraday-header"><div><p className="intraday-eyebrow">{brand} · INTRADAY PILOT</p><h1>分时段销售对比试用版</h1><p className="intraday-subtitle">独立试用页面，不影响原先全天看板。上期商品链接按历史分时段系数折算。</p></div><div className="intraday-header-actions"><Link href="/" className="intraday-back">返回原看板</Link><button type="button" className="intraday-refresh" onClick={refresh} disabled={refreshing}>{refreshing ? "刷新中…" : "刷新数据"}</button>{lastUpdated && <small>更新于 {lastUpdated.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</small>}</div></header>
+    {brandSwitch}
+    <section className="intraday-controls"><label>当前日期<select value={currentDate} onChange={(event) => { setCurrentDate(event.target.value); setPreviousDate(previousMonthDate(event.target.value)); }}>{availableDates.map((date) => <option value={date} key={date}>{date}</option>)}</select></label><label>对比日期<select value={previousDate} onChange={(event) => setPreviousDate(event.target.value)}>{previousDates.map((date) => <option value={date} key={date}>{date}</option>)}</select></label><label>截止时间<select value={cutoff} onChange={(event) => setCutoff(Number(event.target.value))}>{Array.from({ length: 24 }, (_, hour) => <option value={hour} key={hour}>包含 {String(hour).padStart(2, "0")}:00 小时</option>)}</select></label><div className="intraday-rule"><b>当前口径</b><span>{formatDate(currentDate)} 00:00～{String(cutoff).padStart(2, "0")}:59</span></div></section>
     <div className="intraday-notice"><strong>上期数据按历史系数估算</strong><span>系数来自 {formatDate(previousDate)} 店铺分时段销售数据；当前默认包含 08:00 小时。</span></div>
     <section className="intraday-cards"><MetricCard label="全店销售额" current={storeMetrics.currentSales} previous={storeMetrics.previousSales} money /><MetricCard label="全店商品数量" current={storeMetrics.currentUnits} previous={storeMetrics.previousUnits} /><MetricCard label="全店买家数" current={storeMetrics.currentOrders} previous={storeMetrics.previousOrders} /><MetricCard label="全店访客数" current={storeMetrics.currentVisitors} previous={storeMetrics.previousVisitors} /><MetricCard label="全店加购件数" current={storeMetrics.currentCart} previous={storeMetrics.previousCart} /><MetricCard label="商品链接销售额" current={sumLinks(data.linkRows, currentDate, "sales")} previous={sumLinks(data.linkRows, previousDate, "sales") * storeMetrics.linkCoefficients.sales} money /></section>
     {adMetrics && <>
-      <section className="intraday-panel intraday-ads-panel"><div className="intraday-panel-heading"><div><h2>站内广告实时环比</h2><p>总览 CPC = 全站广告花费 ÷ 全站点击；当前总览包含无商品 ID 的店铺广告行。CPM 使用源表 Q 列“浏览数”，不是标准曝光 CPM。</p></div><span>SKT-站内广告每日</span></div><div className="intraday-ads-grid"><MetricCard label="广告直接销售额（产品）" current={adMetrics.currentSales} previous={adMetrics.previousSales} money /><MetricCard label="广告销售占比" current={adMetrics.currentSalesShare} previous={adMetrics.previousSalesShare} formatter={formatRatio} note="产品广告直接销售额 ÷ 商品链接销售额" /><MetricCard label="站内花费" current={adMetrics.currentSpend} previous={adMetrics.previousSpend} money note="含店铺广告行；上期按销售额系数估算" /><MetricCard label="站内花费费率" current={adMetrics.currentSpendRate} previous={adMetrics.previousSpendRate} formatter={formatRatio} note="花费 ÷ 全店销售额" /><MetricCard label="CPC" current={adMetrics.currentCpc} previous={adMetrics.previousCpc} formatter={formatUnitCost} note="全站花费 ÷ 全站点击；上期按系数估算" /><MetricCard label="CPM（按浏览数）" current={adMetrics.currentCpm} previous={adMetrics.previousCpm} formatter={formatUnitCost} note="全站花费 ÷ Q列浏览数 × 1,000" /></div></section>
+      <section className="intraday-panel intraday-ads-panel"><div className="intraday-panel-heading"><div><h2>站内广告实时环比</h2><p>总览 CPC = 全站广告花费 ÷ 全站点击；当前总览包含无商品 ID 的店铺广告行。CPM 使用源表“瀏覽數”，不是标准曝光 CPM。</p></div><span>{BRANDS[brand].adsSheet}</span></div><div className="intraday-ads-grid"><MetricCard label="广告直接销售额（产品）" current={adMetrics.currentSales} previous={adMetrics.previousSales} money /><MetricCard label="广告销售占比" current={adMetrics.currentSalesShare} previous={adMetrics.previousSalesShare} formatter={formatRatio} note="产品广告直接销售额 ÷ 商品链接销售额" /><MetricCard label="站内花费" current={adMetrics.currentSpend} previous={adMetrics.previousSpend} money note="含店铺广告行；上期按销售额系数估算" /><MetricCard label="站内花费费率" current={adMetrics.currentSpendRate} previous={adMetrics.previousSpendRate} formatter={formatRatio} note="花费 ÷ 全店销售额" /><MetricCard label="CPC" current={adMetrics.currentCpc} previous={adMetrics.previousCpc} formatter={formatUnitCost} note="全站花费 ÷ 全站点击；上期按系数估算" /><MetricCard label="CPM（按浏览数）" current={adMetrics.currentCpm} previous={adMetrics.previousCpm} formatter={formatUnitCost} note="全站花费 ÷ 浏览数 × 1,000" /></div></section>
       <section className="intraday-panel intraday-ad-link-panel"><div className="intraday-panel-heading"><div><h2>广告链接维度实时环比</h2><p>只统计有商品 ID 的产品广告行；按商品 ID 汇总，链接销售占比 = 该链接广告直接销售额 ÷ 该链接销售额。</p></div><span>{adLinkRows.length} 条链接</span></div><div className="intraday-table-actions"><input value={adSearch} onChange={(event) => setAdSearch(event.target.value)} placeholder="搜索广告链接简称或商品 ID" /><div className="intraday-segment">{AD_LINK_METRICS.map((item) => <button type="button" className={adMetric === item.key ? "active" : ""} onClick={() => setAdMetric(item.key)} key={item.key}>{item.label}</button>)}</div></div><div className="intraday-table-wrap"><table><thead><tr><th>链接简称</th><th>{formatDate(currentDate)} 当前 · {activeAdMetric.label}</th><th>{formatDate(previousDate)} 上期可比</th><th>差异率</th><th>当前投放明细</th><th>口径</th></tr></thead><tbody>{adLinkRows.slice(0, 100).map((row) => { const current = row.current[adMetric]; const previous = row.previousComparable[adMetric]; const delta = changeRate(current, previous); return <tr key={row.key}><td><b>{row.name}</b><small>{row.id}</small></td><td>{formatAdLinkMetric(adMetric, current)}</td><td>{formatAdLinkMetric(adMetric, previous)}</td><td className={delta !== null && delta >= 0 ? "positive-text" : "negative-text"}>{formatPercent(delta)}</td><td><small>花费 {formatMoney(row.current.spend)} · 点击 {formatNumber(row.current.clicks)} · 浏览 {formatNumber(row.current.exposure)}</small></td><td><em>上期按销售额系数估算</em></td></tr>; })}</tbody></table></div></section>
     </>}
     <div className="intraday-grid"><HourlyTable rows={data.timeRows} currentDate={currentDate} previousDate={previousDate} cutoff={cutoff} /><section className="intraday-panel intraday-formula"><div className="intraday-panel-heading"><div><h2>本次折算参数</h2><p>用于商品链接每日数据的上期还原</p></div><span>估算</span></div><div className="intraday-formula-row"><span>销售额累计系数</span><strong>{(storeMetrics.salesCoefficient * 100).toFixed(2)}%</strong></div><div className="intraday-formula-row"><span>商品数量累计系数</span><strong>{(storeMetrics.unitsCoefficient * 100).toFixed(2)}%</strong></div><div className="intraday-formula-row"><span>访客累计系数</span><strong>{(storeMetrics.visitorsCoefficient * 100).toFixed(2)}%</strong></div><div className="intraday-formula-row"><span>搜索点击累计系数</span><strong>{(storeMetrics.searchCoefficient * 100).toFixed(2)}%</strong></div><div className="intraday-formula-row"><span>加购累计系数</span><strong>{(storeMetrics.cartCoefficient * 100).toFixed(2)}%</strong></div><div className="intraday-formula-row"><span>买家数累计系数</span><strong>{(storeMetrics.buyersCoefficient * 100).toFixed(2)}%</strong></div><p className="intraday-formula-note">上期可比值 = 上期全天值 × 对应指标累计系数。每个链接指标分别使用对应的全店分时段系数。</p></section></div>
-    <section className="intraday-panel intraday-link-panel"><div className="intraday-panel-heading"><div><h2>商品链接分时段对比</h2><p>当前为实际累计数据；上期为全天链接数据按对应 SKT 系数折算。</p></div><span>{linkRows.length} 条链接</span></div><div className="intraday-table-actions"><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索链接简称或商品 ID" /><div className="intraday-segment">{LINK_METRICS.map((item) => <button type="button" className={metric === item.key ? "active" : ""} onClick={() => setMetric(item.key)} key={item.key}>{item.label}</button>)}</div></div><div className="intraday-table-wrap"><table><thead><tr><th>链接简称</th><th>{formatDate(currentDate)} 当前 · {activeMetric.label}</th><th>{formatDate(previousDate)} 上期可比</th><th>差额</th><th>差异率</th><th>口径</th></tr></thead><tbody>{linkRows.slice(0, 100).map((row) => { const current = row.current[metric]; const previous = row.previousComparable[metric]; const delta = changeRate(current, previous); return <tr key={row.key}><td><b>{row.name}</b><small>{row.id || "未填写商品 ID"}</small></td><td>{formatLinkMetric(metric, current)}</td><td>{formatLinkMetric(metric, previous)}</td><td className={current - previous >= 0 ? "positive-text" : "negative-text"}>{formatLinkMetric(metric, current - previous)}</td><td className={delta !== null && delta >= 0 ? "positive-text" : "negative-text"}>{formatPercent(delta)}</td><td><em>按历史系数估算</em></td></tr>; })}</tbody></table></div></section>
-    <footer className="intraday-footer"><span>数据源：SKT-店铺分时段销售数据 + SKT-店铺链接维度每日 + SKT-站内广告每日</span><span>独立试用版 · 原全天看板未修改</span></footer>
+    <section className="intraday-panel intraday-link-panel"><div className="intraday-panel-heading"><div><h2>商品链接分时段对比</h2><p>当前为实际累计数据；上期为全天链接数据按对应 {brand} 系数折算。</p></div><span>{linkRows.length} 条链接</span></div><div className="intraday-table-actions"><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索链接简称或商品 ID" /><div className="intraday-segment">{LINK_METRICS.map((item) => <button type="button" className={metric === item.key ? "active" : ""} onClick={() => setMetric(item.key)} key={item.key}>{item.label}</button>)}</div></div><div className="intraday-table-wrap"><table><thead><tr><th>链接简称</th><th>{formatDate(currentDate)} 当前 · {activeMetric.label}</th><th>{formatDate(previousDate)} 上期可比</th><th>差额</th><th>差异率</th><th>口径</th></tr></thead><tbody>{linkRows.slice(0, 100).map((row) => { const current = row.current[metric]; const previous = row.previousComparable[metric]; const delta = changeRate(current, previous); return <tr key={row.key}><td><b>{row.name}</b><small>{row.id || "未填写商品 ID"}</small></td><td>{formatLinkMetric(metric, current)}</td><td>{formatLinkMetric(metric, previous)}</td><td className={current - previous >= 0 ? "positive-text" : "negative-text"}>{formatLinkMetric(metric, current - previous)}</td><td className={delta !== null && delta >= 0 ? "positive-text" : "negative-text"}>{formatPercent(delta)}</td><td><em>按历史系数估算</em></td></tr>; })}</tbody></table></div></section>
+    <footer className="intraday-footer"><span>数据源：{BRANDS[brand].timeSheet} + {BRANDS[brand].linkSheet} + {BRANDS[brand].adsSheet}</span><span>独立试用版 · 原全天看板未修改</span></footer>
   </main>;
 }
